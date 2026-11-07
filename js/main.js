@@ -60,6 +60,13 @@
     const broke = state.sim.advanceTo(target);
     if (broke && tour.active) tour.onBreak();
   }
+  function tourSeen(sc) {
+    try {
+      return localStorage.getItem(TOUR_KEY + sc.id) === '1';
+    } catch (e) {
+      return false;
+    }
+  }
   function startTour() {
     if (state.scenario.tour) tour.start(state.scenario.tour);
   }
@@ -112,6 +119,7 @@
         renderScenarioTabs();
         renderVariants();
         reset();
+        if (sc.tour && !tourSeen(sc)) startTour();
       };
       nav.appendChild(b);
     });
@@ -418,18 +426,13 @@
   setPlaying(q.get('paused') !== '1');
 
   // Guided tour: auto-start on a first visit (or with ?tour=1 / ?tour=<step>).
-  let seen = false;
-  try {
-    seen = localStorage.getItem(TOUR_KEY + state.scenario.id) === '1';
-  } catch (e) {
-    /* storage unavailable */
-  }
+  const seen = tourSeen(state.scenario);
   const tq = q.get('tour');
   if (tq != null && tq !== '0') {
     startTour();
     const n = parseInt(tq, 10);
     if (n > 1 && tour.active) tour.goto(Math.min(n, state.scenario.tour.steps.length) - 1);
-  } else if (!seen && !q.toString()) {
+  } else if (state.scenario.tour && !seen && !q.toString()) {
     startTour();
   }
   requestAnimationFrame(frame);

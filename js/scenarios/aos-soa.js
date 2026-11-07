@@ -37,12 +37,114 @@
     );
   };
 
+
+  // ---- guided tour: AoS first, then the same work as SoA ----
+  const X = '<b class="st-x">x</b>';
+  const fetchDone = (cpu, line) => (e) =>
+    e.type === 'phase-end' && e.phase === 'fetch' && e.cpu === cpu && (line == null || e.line === line);
+  const opDone = (cpu, ops) => (e) => e.type === 'op-done' && e.cpu === cpu && e.ops === ops;
+  const allDone = (e) => e.type === 'all-done';
+  const aosNs = (lat) => (PER_CORE / 2) * lat.memRead + PER_CORE * lat.l1;
+  const soaNs = (lat) => (PER_CORE / 8) * lat.memRead + PER_CORE * lat.l1;
+  const rows = (...ls) => ls.map((l) => 'row:0x' + l.toString(16).toUpperCase());
+
+  const TOUR = {
+    variant: 'aos',
+    // card over the right-hand memory column (cores 2–3, z and mass), out of the way
+    card: { x: 0.755, top: 0.585, width: 'min(440px, 42%)' },
+    steps: [
+      {
+        title: 'Array of structs: one particle after another',
+        focus: rows(BASE, BASE + 64, BASE + 128, BASE + 192),
+        body:
+          'Each particle is a struct of four 8-byte doubles: x, y, z and mass, 32 bytes in all. ' +
+          'In an array of structs, each 64-byte cache line holds two whole particles. ' +
+          `Core 0 will sum the ${X} of particles 0–7, which live in the four highlighted lines. Only the yellow slots matter to this loop.`,
+      },
+      {
+        title: 'Core 0 misses on p[0].x',
+        focus: ['cpu:0', ...rows(BASE)],
+        speed: 40,
+        until: fetchDone(0),
+        body: (lat) =>
+          'Core 0’s cache is empty, so reading <code>p[0].x</code> is a miss. The cache never fetches just 8 bytes. ' +
+          `It brings in the whole 64-byte line, with x, y, z and mass for particles 0 and 1 (~${lat.memRead} ns). ` +
+          'The other cores are doing the same for their own particles.',
+      },
+      {
+        title: 'Two useful values, six passengers',
+        focus: ['cpu:0', ...rows(BASE)],
+        speed: 600,
+        until: opDone(0, 2),
+        body: (lat) =>
+          `<code>p[0].x</code> and then <code>p[1].x</code> are L1 hits at ~${lat.l1} ns each. ` +
+          'That is everything this line has to offer the loop. The other 6 slots (48 of 64 bytes) are y, z and mass. They were fetched, and they will never be read.',
+      },
+      {
+        title: 'Back to DRAM every other particle',
+        focus: ['cpu:0', ...rows(BASE, BASE + 64)],
+        speed: 40,
+        until: fetchDone(0, BASE + 64),
+        body: (lat) =>
+          `<code>p[2]</code> starts the next line, so that is another ~${lat.memRead} ns miss. Core 0’s single cache line is replaced. ` +
+          'It was only read, so nothing needs writing back. The pattern is one trip to DRAM for every 2 values summed.',
+      },
+      {
+        title: 'Array of structs: finished',
+        focus: null,
+        speed: 15,
+        until: allDone,
+        body: (lat) =>
+          `Each core needs ${PER_CORE / 2} fetches for its ${PER_CORE} values: ${PER_CORE / 2} × ${lat.memRead} + ${PER_CORE} × ${lat.l1} = <b>${aosNs(lat)} ns</b>. ` +
+          'Across all cores, 1,024 bytes came from DRAM to use 256 bytes of x. Three quarters of the memory traffic was wasted.',
+      },
+      {
+        title: 'Struct of arrays: group by field',
+        variant: 'soa',
+        focus: rows(BASE, BASE + 64, BASE + 128, BASE + 192),
+        body:
+          'These are the same particles in the same 1 KB, stored one field at a time: all 32 x values first (highlighted), then y, z and mass. ' +
+          `Every cache line in the x array is 8 consecutive ${X} values, which is exactly what the loop reads.`,
+      },
+      {
+        title: 'One fetch…',
+        focus: ['cpu:0', ...rows(BASE)],
+        speed: 40,
+        until: fetchDone(0),
+        body: (lat) =>
+          `Core 0 misses on <code>x[0]</code> and fetches its line. That takes the same ~${lat.memRead} ns as before, ` +
+          'but this time every slot in the line is a value the loop needs.',
+      },
+      {
+        title: '…eight values',
+        focus: ['cpu:0', ...rows(BASE)],
+        speed: 300,
+        until: opDone(0, PER_CORE),
+        body: (lat) =>
+          `<code>x[0]</code> through <code>x[7]</code> are all L1 hits at ~${lat.l1} ns each. ` +
+          'Core 0 sums all 8 of its values from a single trip to DRAM, and no byte it fetched is wasted.',
+      },
+      {
+        title: 'Same data, 4× less traffic',
+        focus: null,
+        speed: 40,
+        until: allDone,
+        final: true,
+        body: (lat) =>
+          `Struct of arrays finished in <b>${soaNs(lat)} ns</b> instead of ${aosNs(lat)} ns (${(aosNs(lat) / soaNs(lat)).toFixed(1)}× faster), fetching 256 bytes instead of 1,024. ` +
+          'Array of structs is still the right choice when a loop uses every field of each object. Choose the layout by how the data is read. ' +
+          'Real CPUs prefetch sequential lines and hide some of this waiting, but the 4× extra memory traffic remains.',
+      },
+    ],
+  };
+
   NS.scenarios.push({
     id: 'aos-soa',
     title: 'AoS vs SoA',
     summary:
       'Grouping each object’s fields together feels natural, but a loop that reads one field still pays for the whole cache line.',
     metric: 'completion',
+    tour: TOUR,
     variants: [
       {
         id: 'aos',

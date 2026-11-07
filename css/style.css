@@ -404,6 +404,7 @@ kbd {
 .tour-body { font-size: 14px; line-height: 1.55; }
 .tour-body code { font: 12.5px var(--mono); background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
 .tour-body .st-e { color: #0d9488; }
+.tour-body .st-x { color: #eab308; }
 .tour-body .st-m { color: #f76b15; }
 .tour-body .st-i { color: var(--muted); }
 .tour-body .st-inv { color: var(--bad); }

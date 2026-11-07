@@ -5,6 +5,10 @@
  *   - spotlight diagram regions          focus: ['cpu:0', 'row:0x1000', 'bus', ...]
  *   - play the simulation at its own speed   speed: ms of screen time per ns
  *   - run until a hardware event, then pause until: (event, sim) => boolean
+ *   - switch layout                          variant: 'soa' (applies from this step on)
+ *
+ * A tour may set `card: { x, top, width }` to place its card: x is the card's
+ * centre and top its top edge, both as fractions of the diagram.
  *
  * The simulation is deterministic, so Back/Replay simply rebuild a fresh
  * simulation and fast-forward through the earlier steps' breakpoints.
@@ -56,10 +60,24 @@
 
     /** Rebuild the simulation at the start of step i, then enter it. */
     goto(i) {
-      this.app.resetSim(this.def.variant);
-      const sim = this.app.sim();
-      for (let k = 0; k < i; k++) this.runInstant(sim, this.steps[k]);
+      this.app.resetSim(this.variantAt(0));
+      for (let k = 0; k < i; k++) {
+        this.ensureVariant(k);
+        this.runInstant(this.app.sim(), this.steps[k]);
+      }
       this.enter(i);
+    }
+
+    /** The layout in effect at step k: the latest step.variant at or before it. */
+    variantAt(k) {
+      for (let j = k; j >= 0; j--) if (this.steps[j].variant) return this.steps[j].variant;
+      return this.def.variant;
+    }
+
+    /** Switch to a fresh simulation if step k uses a different layout. */
+    ensureVariant(k) {
+      const v = this.variantAt(k);
+      if (this.app.sim().variant.id !== v) this.app.resetSim(v);
     }
 
     runInstant(sim, step) {
@@ -81,6 +99,7 @@
     enter(i) {
       this.i = i;
       const step = this.steps[i];
+      this.ensureVariant(i);
       const sim = this.app.sim();
       this.arm(sim, step);
       this.app.view.setFocus(step.focus || null);
@@ -123,8 +142,11 @@
       const lat = this.app.lat;
       const body = typeof step.body === 'function' ? step.body(lat, this.app.getSpeed()) : step.body;
       const actions = step.final
-        ? `<button class="btn" data-a="close">Keep watching</button>
-           <button class="btn primary" data-a="fix">${step.finalLabel || 'Show the fix'} →</button>`
+        ? step.finalLabel
+          ? `<button class="btn" data-a="close">Keep watching</button>
+             <button class="btn primary" data-a="fix">${step.finalLabel} →</button>`
+          : `<button class="btn" data-a="back">Back</button>
+             <button class="btn primary" data-a="close">Done</button>`
         : `<button class="btn" data-a="back" ${this.i === 0 ? 'disabled' : ''}>Back</button>
            ${step.until ? '<button class="btn" data-a="replay" title="Replay this step">Replay</button>' : ''}
            <button class="btn primary" data-a="next">${this.i === 0 ? 'Start' : 'Next'} →</button>`;
@@ -189,18 +211,23 @@
       if (!svg || !card) return;
       if (window.matchMedia('(max-width: 760px)').matches) {
         this.root.style.top = '';
-        host.style.paddingBottom = '';
+        this.clearLayout();
         return;
       }
       const h = svg.getBoundingClientRect().height;
-      const top = h * (this.def.cardTop || 0.715);
+      const pos = this.def.card || {};
+      const top = h * (pos.top != null ? pos.top : 0.715);
       this.root.style.top = top + 'px';
+      this.root.style.left = pos.x != null ? pos.x * 100 + '%' : '';
+      this.root.style.width = pos.width || '';
       host.style.paddingBottom = Math.max(0, top + card.offsetHeight - h + 12) + 'px';
     }
 
     clearLayout() {
       const host = this.root.parentElement;
       if (host) host.style.paddingBottom = '';
+      this.root.style.left = '';
+      this.root.style.width = '';
     }
   }
 

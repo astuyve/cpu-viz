@@ -21,7 +21,10 @@ diagram, plays the simulation at its own slowed-down speed, and pauses on a
 hardware event emitted by the engine (`miss`, `phase-start`, `phase-end`,
 `op-done`). Because the simulation is deterministic, Back/Replay just rebuild
 it and fast-forward through earlier steps. Tours live on the scenario
-(`scenario.tour`); the controller is `js/tour.js`.
+(`scenario.tour`); the controller is `js/tour.js`. A step can switch layouts
+with `variant: '<id>'` (the AoS vs SoA tour runs AoS, then SoA), and a tour can
+place its card with `card: { x, top, width }`. Each scenario's tour auto-starts
+on its first visit.
 
 ## Scenarios
 
