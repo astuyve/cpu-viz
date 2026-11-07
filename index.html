@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CPU Viz</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <div class="logo" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+      <div>
+        <h1>CPU Viz</h1>
+        <p>How your memory layout behaves on real silicon</p>
+      </div>
+    </div>
+    <nav class="tabs" id="scenarioTabs" aria-label="Scenarios"></nav>
+  </header>
+
+  <main class="layout">
+    <section class="stage card">
+      <p class="summary" id="scenarioSummary"></p>
+      <div class="toolbar">
+        <div class="seg" id="variantSeg" role="group" aria-label="Memory layout"></div>
+        <div class="transport">
+          <button id="playBtn" class="btn primary" aria-pressed="true">Pause</button>
+          <button id="stepBtn" class="btn" title="Advance to the next hardware event (→)">Step</button>
+          <button id="ffBtn" class="btn" title="Simulate 1 µs instantly">+1 µs</button>
+          <button id="resetBtn" class="btn" title="Reset (R)">Reset</button>
+        </div>
+      </div>
+      <div class="timebar">
+        <div class="clock">
+          <span class="label">Simulated time</span>
+          <span id="clock" class="mono big">0 ns</span>
+        </div>
+        <div class="speed">
+          <label class="label" for="speed">Playback speed <span id="speedLabel" class="mono"></span></label>
+          <input type="range" id="speed" min="0" max="100" step="0.1">
+          <span id="speedSub" class="sub"></span>
+        </div>
+      </div>
+      <div class="svgwrap">
+        <svg id="viz" role="img" aria-label="Four CPU cores, each with a one-line L1 cache, connected by an interconnect to main memory"></svg>
+      </div>
+      <div class="narration" id="narration" aria-live="polite"></div>
+    </section>
+
+    <aside class="side">
+      <section class="card">
+        <h2>The code</h2>
+        <pre class="code" id="code"></pre>
+        <p class="note" id="codeNote"></p>
+      </section>
+
+      <section class="card">
+        <h2>Throughput</h2>
+        <div id="compare"></div>
+        <dl class="stats" id="stats"></dl>
+      </section>
+
+      <section class="card">
+        <h2>Event log</h2>
+        <ol class="log" id="log"></ol>
+      </section>
+
+      <details class="card">
+        <summary>Latencies</summary>
+        <p class="note">Typical figures for a modern x86 server. Changes take effect on the next transaction.</p>
+        <div id="latencies"></div>
+      </details>
+
+      <details class="card">
+        <summary>Legend &amp; simplifications</summary>
+        <ul class="legend">
+          <li><span class="sw" style="background:#f76b15"></span><b>M · Modified</b>: the only copy, and newer than DRAM</li>
+          <li><span class="sw" style="background:#0d9488"></span><b>E · Exclusive</b>: the only copy, matches DRAM</li>
+          <li><span class="sw" style="background:#3e63dd"></span><b>S · Shared</b>: a clean copy that other cores may also hold</li>
+          <li><span class="sw" style="background:#8b8d98"></span><b>I · Invalid</b>: stale, so the line must be re-fetched</li>
+          <li><span class="sw round" style="background:#e5484d"></span><b>INV</b>: an invalidation message</li>
+        </ul>
+        <p class="note">To keep the picture readable, this model:</p>
+        <ul class="note list">
+          <li>gives each core one cache line and no L2/L3 caches.</li>
+          <li>always re-fetches an invalidated line from DRAM. Real CPUs usually forward a dirty line core-to-core through the shared L3 in about 40–80 ns. That is faster than DRAM, but still 40–80× slower than an L1 hit.</li>
+          <li>lets a core do one increment each time it owns the line. Real cores often fit several in, so measured false-sharing slowdowns are usually 2–20× rather than hundreds, and are worse across sockets.</li>
+        </ul>
+      </details>
+      <p class="kbd-hint">Keys: <kbd>Space</kbd> play/pause · <kbd>→</kbd> step · <kbd>R</kbd> reset</p>
+    </aside>
+  </main>
+
+  <script src="js/engine.js"></script>
+  <script src="js/scenarios/false-sharing.js"></script>
+  <script src="js/view.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
