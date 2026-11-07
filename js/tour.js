@@ -9,8 +9,8 @@
  *   - set the scenario parameter             param: 1024 (likewise; tour default def.param)
  *   - fill in other layouts' results          precompute: ['aos'] (run off-screen on entry)
  *
- * A tour may set `card: { x, top, width }` to place its card: x is the card's
- * centre and top its top edge, both as fractions of the diagram.
+ * A tour (or a single step) may set `card: { x, top, width }` to place its card:
+ * x is the card's centre and top its top edge, both as fractions of the diagram.
  *
  * The simulation is deterministic, so Back/Replay simply rebuild a fresh
  * simulation and fast-forward through the earlier steps' breakpoints.
@@ -225,7 +225,7 @@
         return;
       }
       const h = svg.getBoundingClientRect().height;
-      const pos = this.def.card || {};
+      const pos = this.steps[this.i].card || this.def.card || {};
       const top = h * (pos.top != null ? pos.top : 0.715);
       this.root.style.top = top + 'px';
       this.root.style.left = pos.x != null ? pos.x * 100 + '%' : '';

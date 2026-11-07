@@ -2,7 +2,7 @@
  * Scenario: array of structs vs struct of arrays.
  *
  * N particles, each { x, y, z, mass } as 8-byte doubles. Four threads each
- * sum the x of their own N/4 particles, once. Same data, same size, only the
+ * sum the mass of their own N/4 particles, once. Same data, same size, only the
  * order in memory differs. N is a scenario parameter: 32 for the step-by-step
  * tour, 1,024 to see the difference at scale.
  *
@@ -26,15 +26,17 @@
   const N = () => PARAM.value;
   const PER_CORE = () => N() / 4;
   const FIELDS = ['x', 'y', 'z', 'm'];
-  const X_FILL = '#eab308';
-  const X_INK = '#1b1b1b';
+  const SUMMED = 'm'; // the field the loop reads: mass
+  const HOT_FILL = '#eab308';
+  const HOT_INK = '#1b1b1b';
+  const MASS_OFF = 24; // byte offset of mass inside the 32-byte struct
   const lineCache = {};
   const LINES = () => (lineCache[N()] = lineCache[N()] || Array.from({ length: (N() * 32) / 64 }, (_, i) => BASE + i * 64));
   const fmt = (n) => n.toLocaleString();
 
   const look = (field, idx) =>
-    field === 'x'
-      ? { label: `x${idx}`, fill: X_FILL, ink: X_INK, field }
+    field === SUMMED
+      ? { label: `${field}${idx}`, fill: HOT_FILL, ink: HOT_INK, field }
       : { label: `${field}${idx}`, fill: null, ink: null, field };
 
   const UNIT = { one: 'value summed', many: 'values summed', per: 'value' };
@@ -44,13 +46,17 @@
     const pct = Math.round((s.bytesUsed / Math.max(1, s.bytesFetched)) * 100);
     return (
       `All four sums finished in ${NS.fmtNs(sim.time)}. The cores fetched ${fmt(s.fetches)} cache lines (${fmt(s.bytesFetched)} B) from DRAM ` +
-      `to read ${fmt(s.bytesUsed)} B of x values, so ${pct}% of the bytes moved were actually used${layoutWord}.`
+      `to read ${fmt(s.bytesUsed)} B of mass values, so ${pct}% of the bytes moved were actually used${layoutWord}.`
     );
   };
 
 
   // ---- guided tour: AoS first, then the same work as SoA ----
-  const X = '<b class="st-x">x</b>';
+  const M = '<b class="st-x">mass</b>';
+  const SOA_MASS = 0x1000 + 3 * 32 * 8; // mass array start in the 32-particle layout
+  // SoA's mass array sits in the right-hand memory column, so those steps put
+  // the card over the left column (x and y) instead.
+  const LEFT_CARD = { x: 0.3, top: 0.585, width: 'min(440px, 42%)' };
   const fetchDone = (cpu, line) => (e) =>
     e.type === 'phase-end' && e.phase === 'fetch' && e.cpu === cpu && (line == null || e.line === line);
   const opDone = (cpu, ops) => (e) => e.type === 'op-done' && e.cpu === cpu && e.ops === ops;
@@ -73,15 +79,15 @@
         body:
           'Each particle is a struct of four 8-byte doubles: x, y, z and mass, 32 bytes in all. ' +
           'In an array of structs, each 64-byte cache line holds two whole particles. ' +
-          `Core 0 will sum the ${X} of particles 0–7, which live in the four highlighted lines. Only the yellow slots matter to this loop.`,
+          `Core 0 will sum the ${M} of particles 0–7, which live in the four highlighted lines. Only the yellow slots matter to this loop.`,
       },
       {
-        title: 'Core 0 misses on p[0].x',
+        title: 'Core 0 misses on p[0].mass',
         focus: ['cpu:0', ...rows(BASE)],
         speed: 40,
         until: fetchDone(0),
         body: (lat) =>
-          'Core 0’s cache is empty, so reading <code>p[0].x</code> is a miss. The cache never fetches just 8 bytes. ' +
+          'Core 0’s cache is empty, so reading <code>p[0].mass</code> is a miss. The cache never fetches just 8 bytes. ' +
           `It brings in the whole 64-byte line, with x, y, z and mass for particles 0 and 1 (~${lat.memRead} ns). ` +
           'The other cores are doing the same for their own particles.',
       },
@@ -91,8 +97,8 @@
         speed: 600,
         until: opDone(0, 2),
         body: (lat) =>
-          `<code>p[0].x</code> and then <code>p[1].x</code> are L1 hits at ~${lat.l1} ns each. ` +
-          'That is everything this line has to offer the loop. The other 6 slots (48 of 64 bytes) are y, z and mass. They were fetched, and they will never be read.',
+          `<code>p[0].mass</code> and then <code>p[1].mass</code> are L1 hits at ~${lat.l1} ns each. ` +
+          'That is everything this line has to offer the loop. The other 6 slots (48 of 64 bytes) are x, y and z. They were fetched, and they will never be read.',
       },
       {
         title: 'Back to DRAM for every other particle',
@@ -110,36 +116,40 @@
         until: allDone,
         body: (lat) =>
           `Each core needs ${SMALL / 2} fetches for its ${SMALL} values: ${SMALL / 2} × ${lat.memRead} + ${SMALL} × ${lat.l1} = <b>${aosNs(lat)} ns</b>. ` +
-          'Across all cores, 1,024 bytes came from DRAM to use 256 bytes of x. Three quarters of the memory traffic was wasted.',
+          'Across all cores, 1,024 bytes came from DRAM to use 256 bytes of mass. Three quarters of the memory traffic was wasted.',
       },
       {
         title: 'Struct of arrays: group by field',
         variant: 'soa',
-        focus: rows(BASE, BASE + 64, BASE + 128, BASE + 192),
+        card: LEFT_CARD,
+        focus: rows(SOA_MASS, SOA_MASS + 64, SOA_MASS + 128, SOA_MASS + 192),
         body:
-          'These are the same particles in the same 1 KB, stored one field at a time: all 32 x values first (highlighted), then y, z and mass. ' +
-          `Every cache line in the x array is 8 consecutive ${X} values, which is exactly what the loop reads.`,
+          'These are the same particles in the same 1 KB, stored one field at a time: all 32 x values, then y, then z, then the 32 mass values (highlighted). ' +
+          `Every cache line in the mass array is 8 consecutive ${M} values, which is exactly what the loop reads.`,
       },
       {
         title: 'One fetch…',
-        focus: ['cpu:0', ...rows(BASE)],
+        card: LEFT_CARD,
+        focus: ['cpu:0', ...rows(SOA_MASS)],
         speed: 40,
         until: fetchDone(0),
         body: (lat) =>
-          `Core 0 misses on <code>x[0]</code> and fetches its line. That takes the same ~${lat.memRead} ns as before, ` +
+          `Core 0 misses on <code>mass[0]</code> and fetches its line. That takes the same ~${lat.memRead} ns as before, ` +
           'but this time every slot in the line is a value the loop needs.',
       },
       {
         title: '…eight values',
-        focus: ['cpu:0', ...rows(BASE)],
+        card: LEFT_CARD,
+        focus: ['cpu:0', ...rows(SOA_MASS)],
         speed: 300,
         until: opDone(0, SMALL),
         body: (lat) =>
-          `<code>x[0]</code> through <code>x[7]</code> are all L1 hits at ~${lat.l1} ns each. ` +
+          `<code>mass[0]</code> through <code>mass[7]</code> are all L1 hits at ~${lat.l1} ns each. ` +
           'Core 0 sums all 8 of its values from a single trip to DRAM, and no byte it fetched is wasted.',
       },
       {
         title: 'Same data, 4× less traffic',
+        card: LEFT_CARD,
         focus: null,
         speed: 40,
         until: allDone,
@@ -151,6 +161,7 @@
       {
         title: 'Here’s what it looks like with more data',
         param: 1024,
+        card: LEFT_CARD,
         focus: null,
         speed: 2,
         until: allDone,
@@ -189,23 +200,23 @@
           const off = line - BASE + k * 8;
           return look(FIELDS[(off % 32) / 8], Math.floor(off / 32));
         },
-        threadDesc: (cpu) => `sum p[${cpu * PER_CORE()}..${(cpu + 1) * PER_CORE() - 1}].x`,
+        threadDesc: (cpu) => `sum p[${cpu * PER_CORE()}..${(cpu + 1) * PER_CORE() - 1}].mass`,
         nextOp(cpu, iter) {
           if (iter >= PER_CORE()) return null;
           const p = cpu * PER_CORE() + iter;
-          return { kind: 'read', addr: BASE + p * 32, desc: `p[${p}].x` };
+          return { kind: 'read', addr: BASE + p * 32 + MASS_OFF, desc: `p[${p}].mass` };
         },
         get intro() {
           return (
             'Each particle is a 32-byte struct of x, y, z and mass, so one 64-byte cache line holds two whole particles. ' +
-            `Each core sums the x of its own ${fmt(PER_CORE())} particles. Only the yellow slots are needed. The grey ones come along for the ride.`
+            `Each core sums the mass of its own ${fmt(PER_CORE())} particles. Only the yellow slots are needed. The grey ones come along for the ride.`
           );
         },
         steadyText: (cpu, lat, op) =>
           `Core ${cpu} reads ${op.desc} as an L1 hit (${lat.l1} ns). It came in with the previous particle’s line. ` +
-          'That is the only free value in this line, because the other 6 slots are y, z and mass, which this loop never reads.',
+          'That is the only free value in this line, because the other 6 slots are x, y and z, which this loop never reads.',
         steadyCpu: true,
-        doneText: doneText(' (the other 75% was y, z and mass)'),
+        doneText: doneText(' (the other 75% was x, y and z)'),
         code: [
           'struct particle {',
           '    double x, y, z;',
@@ -213,18 +224,18 @@
           '};  // 32 bytes: 2 per cache line',
           'struct particle p[N];',
           '',
-          'double sum_x(int lo, int hi) {',
+          'double total_mass(int lo, int hi) {',
           '    double sum = 0;',
           '    for (int i = lo; i < hi; i++)',
           '        // reads 8 of every 32 bytes',
-          '        sum += p[i].x;',
+          '        sum += p[i].mass;',
           '    return sum;',
           '}',
         ],
         hot: [0, 1, 2, 3, 10],
         note:
           'Array of structs is the natural first choice: one struct per object, just like the domain model, and ideal when a loop uses every field. ' +
-          'But this loop only needs x, and the cache always moves whole 64-byte lines, so 3 out of every 4 bytes fetched are wasted.',
+          'But this loop only needs mass, and the cache always moves whole 64-byte lines, so 3 out of every 4 bytes fetched are wasted.',
       },
       {
         id: 'soa',
@@ -241,20 +252,20 @@
           const off = line - BASE + k * 8;
           return look(FIELDS[Math.floor(off / (N() * 8))], (off % (N() * 8)) / 8);
         },
-        threadDesc: (cpu) => `sum x[${cpu * PER_CORE()}..${(cpu + 1) * PER_CORE() - 1}]`,
+        threadDesc: (cpu) => `sum mass[${cpu * PER_CORE()}..${(cpu + 1) * PER_CORE() - 1}]`,
         nextOp(cpu, iter) {
           if (iter >= PER_CORE()) return null;
           const i = cpu * PER_CORE() + iter;
-          return { kind: 'read', addr: BASE + i * 8, desc: `x[${i}]` };
+          return { kind: 'read', addr: BASE + 3 * N() * 8 + i * 8, desc: `mass[${i}]` };
         },
         get intro() {
           return (
-            `The same particles, stored one field at a time: all ${fmt(N())} x values first, then all y, z and mass values. ` +
-            'Each cache line now holds 8 consecutive x values, which is exactly what the loop needs.'
+            `The same particles, stored one field at a time: all ${fmt(N())} x values, then y, then z, then all the mass values. ` +
+            'Each cache line of the mass array holds 8 consecutive mass values, which is exactly what the loop needs.'
           );
         },
         steadyText: (cpu, lat, op) =>
-          `Core ${cpu} reads ${op.desc} as an L1 hit (${lat.l1} ns). Every slot in this line is an x value the loop needs, so one DRAM fetch covers all 8 iterations.`,
+          `Core ${cpu} reads ${op.desc} as an L1 hit (${lat.l1} ns). Every slot in this line is a mass value the loop needs, so one DRAM fetch covers all 8 iterations.`,
         steadyCpu: true,
         doneText: doneText(''),
         code: [
@@ -266,17 +277,17 @@
           '};',
           'struct particles p;',
           '',
-          'double sum_x(int lo, int hi) {',
+          'double total_mass(int lo, int hi) {',
           '    double sum = 0;',
           '    for (int i = lo; i < hi; i++)',
-          '        // 8 x values per cache line',
-          '        sum += p.x[i];',
+          '        // 8 masses per cache line',
+          '        sum += p.mass[i];',
           '    return sum;',
           '}',
         ],
         hot: [0, 1, 2, 3, 4, 12],
         note:
-          'This is the same data, grouped by field instead of by object. A loop over x now uses every byte it fetches, and SIMD instructions can process the contiguous values directly. ' +
+          'This is the same data, grouped by field instead of by object. A loop over mass now uses every byte it fetches, and SIMD instructions can process the contiguous values directly. ' +
           'Real CPUs prefetch sequential lines, which hides much of the waiting for a simple scan like this one. The waste then shows up as memory bandwidth instead: array of structs moves 4× the bytes.',
       },
     ],

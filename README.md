@@ -31,10 +31,10 @@ always starts its tour.
 - **False sharing**: four threads increment their own counters. Packed into one
   64-byte line, the cores ping-pong ownership (invalidate → write-back → DRAM
   fetch) for every increment. Padded to a line each, they run from L1 at ~1 ns.
-- **AoS vs SoA**: four threads each sum the `x` of their share of the particles
+- **AoS vs SoA**: four threads each sum the `mass` of their share of the particles
   (`{x, y, z, mass}`). As an array of structs, each 64-byte line holds 2 useful
   values and 6 the loop never reads (25% of fetched bytes used); as a struct of
-  arrays, each line is 8 consecutive `x` values (100% used). A size toggle picks
+  arrays, each line is 8 consecutive `mass` values (100% used). A size toggle picks
   32 particles (408 vs 108 ns, used by the tour walkthrough) or 1,024 (13.1 vs
   3.5 µs, the default, played at 1 ns = 2 ms with a sliding memory window).
   No prefetcher is modeled.
