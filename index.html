@@ -22,7 +22,10 @@
     <section class="stage card">
       <p class="summary" id="scenarioSummary"></p>
       <div class="toolbar">
-        <div class="seg" id="variantSeg" role="group" aria-label="Memory layout"></div>
+        <div class="seg-group">
+          <div class="seg" id="variantSeg" role="group" aria-label="Memory layout"></div>
+          <div class="seg" id="paramSeg" role="group" aria-label="Data size" hidden></div>
+        </div>
         <div class="transport">
           <button id="tourBtn" class="btn" title="Walk through the first few hardware events step by step">Guided tour</button>
           <button id="playBtn" class="btn primary" aria-pressed="true">Pause</button>

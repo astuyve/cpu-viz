@@ -6,6 +6,8 @@
  *   - play the simulation at its own speed   speed: ms of screen time per ns
  *   - run until a hardware event, then pause until: (event, sim) => boolean
  *   - switch layout                          variant: 'soa' (applies from this step on)
+ *   - set the scenario parameter             param: 1024 (likewise; tour default def.param)
+ *   - fill in other layouts' results          precompute: ['aos'] (run off-screen on entry)
  *
  * A tour may set `card: { x, top, width }` to place its card: x is the card's
  * centre and top its top edge, both as fractions of the diagram.
@@ -60,7 +62,7 @@
 
     /** Rebuild the simulation at the start of step i, then enter it. */
     goto(i) {
-      this.app.resetSim(this.variantAt(0));
+      this.app.resetSim(this.variantAt(0), this.paramAt(0));
       for (let k = 0; k < i; k++) {
         this.ensureVariant(k);
         this.runInstant(this.app.sim(), this.steps[k]);
@@ -74,10 +76,17 @@
       return this.def.variant;
     }
 
-    /** Switch to a fresh simulation if step k uses a different layout. */
+    paramAt(k) {
+      for (let j = k; j >= 0; j--) if (this.steps[j].param != null) return this.steps[j].param;
+      return this.def.param != null ? this.def.param : null;
+    }
+
+    /** Switch to a fresh simulation if step k uses a different layout or parameter. */
     ensureVariant(k) {
       const v = this.variantAt(k);
-      if (this.app.sim().variant.id !== v) this.app.resetSim(v);
+      const p = this.paramAt(k);
+      const sim = this.app.sim();
+      if (sim.variant.id !== v || (p != null && sim.paramValue !== p)) this.app.resetSim(v, p);
     }
 
     runInstant(sim, step) {
@@ -100,6 +109,7 @@
       this.i = i;
       const step = this.steps[i];
       this.ensureVariant(i);
+      if (step.precompute) step.precompute.forEach((id) => this.app.precompute(id));
       const sim = this.app.sim();
       this.arm(sim, step);
       this.app.view.setFocus(step.focus || null);

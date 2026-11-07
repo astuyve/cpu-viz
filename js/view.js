@@ -187,10 +187,15 @@
       el('rect', { x: G.memX, y: G.memY, width: G.memW, height: G.memH, rx: 14, class: 'box mem' }, gm);
       txt(gm, G.memX + 22, G.memY + 32, 'Main memory (DRAM)', 't-title');
       this.memLat = txt(gm, G.memX + G.memW - 22, G.memY + 32, '', 't-small muted', { 'text-anchor': 'end' });
-      const lines = sim.variant.memoryLines;
+      const allLines = sim.variant.memoryLines;
       const showValues = sim.variant.showValues !== false;
-      // Up to 4 lines: roomy single column. More: compact two-column grid.
+      // Up to 4 lines: roomy single column. Up to 16: compact two-column grid.
+      // More: a sliding window of each core's next 4 lines (rows filled per frame).
+      const windowed = allLines.length > 16;
+      const lines = windowed ? new Array(16).fill(null) : allLines;
       const compact = lines.length > 4;
+      this.windowed = windowed;
+      this.lastLine = allLines[allLines.length - 1];
       const geo = compact
         ? { compact, perCol: Math.ceil(lines.length / 2), x0s: [170, 690], y0: G.memY + 52, gap: 36, h: 28, sw: 50, sg: 4 }
         : { compact, perCol: lines.length, x0s: [G.mSlotX0], y0: G.rowY0, gap: G.rowGap, h: G.rowH, sw: G.mSlotW, sg: G.mSlotGap };
@@ -199,18 +204,22 @@
         const x0 = geo.x0s[Math.floor(r / geo.perCol)];
         const y = geo.y0 + (r % geo.perCol) * geo.gap;
         const rowW = SLOTS * geo.sw + (SLOTS - 1) * geo.sg;
-        const row = { line, y, x0, w: rowW, h: geo.h, cx: x0 + rowW / 2, slots: [] };
+        const row = { line, y, x0, w: rowW, h: geo.h, cx: x0 + rowW / 2, slots: [], core: Math.floor(r / 4), j: r % 4 };
         const hp = compact ? 4 : 8;
         row.hl = el('rect', { x: x0 - hp, y: y - hp, width: rowW + hp * 2, height: geo.h + hp * 2, rx: compact ? 7 : 10, class: 'rowhl', opacity: 0 }, gm);
+        if (windowed && row.j === 0) {
+          // colour bar marking which core's stream this group of 4 rows follows
+          el('rect', { x: x0 - 82, y: y - 2, width: 4, height: 3 * geo.gap + geo.h + 4, rx: 2, fill: CPU_COLORS[row.core] }, gm);
+        }
         if (compact) {
-          txt(gm, x0 - 10, y + geo.h / 2 + 4, hex(line), 't-mono', { 'text-anchor': 'end' });
+          row.addrText = txt(gm, x0 - 10, y + geo.h / 2 + 4, line == null ? '' : hex(line), 't-mono', { 'text-anchor': 'end' });
         } else {
           txt(gm, x0 - 16, y + 20, hex(line), 't-mono', { 'text-anchor': 'end' });
           txt(gm, x0 - 16, y + 36, 'cache line', 't-tiny muted', { 'text-anchor': 'end' });
         }
         for (let s = 0; s < SLOTS; s++) {
           const sx = x0 + s * (geo.sw + geo.sg);
-          const look = this.slotLook(sim, line, s);
+          const look = line == null ? { label: '', fill: null } : this.slotLook(sim, line, s);
           const r2 = el('rect', { x: sx, y, width: geo.sw, height: geo.h, rx: compact ? 4 : 6, class: look.fill ? 'slot owned' : 'slot' }, gm);
           if (look.fill) r2.setAttribute('fill', look.fill);
           let v;
@@ -223,13 +232,41 @@
             v.style.fill = look.ink || 'var(--muted)';
           }
           const ring = el('rect', { x: sx - 3, y: y - 3, width: geo.sw + 6, height: geo.h + 6, rx: 7, class: 'landing', opacity: 0 }, gm);
-          row.slots.push({ v, owner: look.owner != null ? look.owner : null, ring, cx: sx + geo.sw / 2 });
+          row.slots.push({ r: r2, v, owner: look.owner != null ? look.owner : null, ring, cx: sx + geo.sw / 2 });
         }
         row.stale = txt(gm, x0 + rowW + 18, y + 28, '', 't-small stale');
         this.rows.push(row);
       });
+      if (windowed) {
+        txt(gm, G.memX + 200, G.memY + 32, `each core’s next 4 of ${allLines.length.toLocaleString()} lines`, 't-small muted');
+      }
       if (!compact) {
         txt(gm, G.mSlotX0, G.memY + G.memH - 14, 'Byte offset within each line: 0 · 8 · 16 · 24 · 32 · 40 · 48 · 56', 't-tiny muted');
+      }
+    }
+
+    /** Windowed memory: point each row at its core's current line + j. */
+    updateWindow(sim) {
+      for (const row of this.rows) {
+        const cpu = sim.cpus[row.core];
+        const op = cpu.op || sim.variant.nextOp(row.core, 0);
+        let line = op ? NS.mem.lineOf(op.addr) + row.j * 64 : null;
+        if (line != null && line > this.lastLine) line = null;
+        if (line === row.line) continue;
+        row.line = line;
+        setText(row.addrText, line == null ? '' : hex(line));
+        row.slots.forEach((s, k) => {
+          const look = line == null ? { label: '', fill: null } : this.slotLook(sim, line, k);
+          if (look.fill) {
+            s.r.setAttribute('fill', look.fill);
+            s.r.setAttribute('class', 'slot owned');
+          } else {
+            s.r.removeAttribute('fill');
+            s.r.setAttribute('class', 'slot');
+          }
+          setText(s.v, look.label);
+          s.v.style.fill = look.ink || 'var(--muted)';
+        });
       }
     }
 
@@ -406,6 +443,9 @@
             setText(s.v, look.label);
             s.v.setAttribute('class', 't-slot');
             s.v.style.fill = look.ink || 'var(--muted)';
+            // shrink long labels (e.g. x10239) to fit the 28-unit cache slot
+            const n = look.label.length;
+            s.v.style.fontSize = n <= 3 ? '' : n === 4 ? '9px' : n === 5 ? '7.5px' : '6.5px';
           }
           setText(s.lab, look && showValues ? look.label : '');
         });
@@ -425,6 +465,7 @@
       });
 
       // memory rows
+      if (this.windowed) this.updateWindow(sim);
       const active = new Map();
       for (const a of sim.anims) {
         if ((a.kind === 'wb' || a.kind === 'fetch') && a.start <= sim.time) active.set(a.line, a.kind);
@@ -490,7 +531,10 @@
           const cpuId = a.kind === 'wb' ? a.from : a.to;
           const cb = cacheBottom(cpuId);
           let pts;
-          if (row && this.memGeo.compact) {
+          if (!row && this.memGeo.compact) {
+            pts = [cb, [cb[0], G.memY + 24]];
+            if (a.kind === 'fetch') pts = pts.reverse();
+          } else if (row && this.memGeo.compact) {
             // Compact grid: each core gets its own vertical channel, so
             // simultaneous fetches don't pile up on one wire.
             if (a.kind === 'wb' && p >= 1) continue;

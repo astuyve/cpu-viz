@@ -159,6 +159,9 @@ details[open].card summary { margin-bottom: 10px; }
   gap: 3px;
   flex-wrap: wrap;
 }
+.seg-group { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.seg[hidden] { display: none; }
+.seg-label { align-self: center; padding: 0 6px 0 8px; font-size: 11.5px; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
 .seg-btn {
   font: inherit;
   font-weight: 600;

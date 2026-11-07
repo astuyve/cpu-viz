@@ -13,7 +13,7 @@
     playing: true,
     msPerNs: 15,
     sim: null,
-    results: {}, // variantId -> { thr, nsPerOp, time }
+    results: {}, // `${variantId}:${param}` -> { val, ... }
     lastLogSeq: -1,
     lastPanel: 0,
     lastNarr: -1,
@@ -24,14 +24,15 @@
   const tour = new NS.Tour(
     {
       sim: () => state.sim,
-      resetSim(variantId) {
+      resetSim(variantId, paramValue) {
         const i = state.scenario.variants.findIndex((v) => v.id === variantId);
-        if (i >= 0 && i !== state.variantIdx) {
-          state.variantIdx = i;
-          renderVariants();
-        }
+        if (i >= 0) state.variantIdx = i;
+        const p = state.scenario.param;
+        if (p && paramValue != null) p.value = paramValue;
+        renderVariants();
         reset();
       },
+      precompute,
       getSpeed: () => state.msPerNs,
       setSpeed,
       isPlaying: () => state.playing,
@@ -49,6 +50,7 @@
           renderVariants();
           reset();
         }
+        if (state.scenario.param) setSpeed(defaultSpeed(state.scenario));
         setPlaying(true);
       },
     },
@@ -81,20 +83,41 @@
     return state.scenario.variants[state.variantIdx];
   }
 
+  /** Current value of the scenario's parameter (e.g. particle count), or null. */
+  function paramValue() {
+    return state.scenario.param ? state.scenario.param.value : null;
+  }
+  const resKey = (variantId, pv) => `${variantId}:${pv == null ? '' : pv}`;
+  function defaultSpeed(sc) {
+    return sc.param && sc.param.speeds ? sc.param.speeds[sc.param.value] : 15;
+  }
+
   /** Save a run's result for the comparison panel (called every panel refresh and before a reset). */
   function recordResult(sim) {
     const v = sim.variant;
     if (!state.scenario.variants.includes(v)) return; // scenario changed
+    const key = resKey(v.id, sim.paramValue);
     if (state.scenario.metric === 'completion') {
-      if (sim.finished) state.results[v.id] = { val: sim.doneAt, fetched: sim.stats.bytesFetched };
+      if (sim.finished) state.results[key] = { val: sim.doneAt, fetched: sim.stats.bytesFetched };
     } else if (sim.time >= 50) {
-      state.results[v.id] = { val: sim.totalOps() / (sim.time / 1000), time: sim.time };
+      state.results[key] = { val: sim.totalOps() / (sim.time / 1000), time: sim.time };
     }
+  }
+
+  /** Run a variant to completion off-screen and record its result (used by tours). */
+  function precompute(variantId) {
+    const v = state.scenario.variants.find((x) => x.id === variantId);
+    if (!v) return;
+    const sim = new NS.Sim({ numCpus: 4, variant: v, lat });
+    sim.paramValue = paramValue();
+    for (let n = 0; n < 10000 && !sim.finished; n++) sim.advanceTo(sim.time + 1e6);
+    recordResult(sim);
   }
 
   function reset() {
     if (state.sim) recordResult(state.sim);
     state.sim = new NS.Sim({ numCpus: 4, variant: variant(), lat });
+    state.sim.paramValue = paramValue();
     view.build(state.sim);
     state.lastLogSeq = -1;
     state.lastNarr = -1;
@@ -116,10 +139,11 @@
         state.scenario = sc;
         state.variantIdx = 0;
         state.results = {};
+        setSpeed(defaultSpeed(sc));
         renderScenarioTabs();
         renderVariants();
         reset();
-        if (sc.tour && !tourSeen(sc)) startTour();
+        if (sc.tour) startTour(); // selecting a scenario always opens its tour
       };
       nav.appendChild(b);
     });
@@ -127,7 +151,34 @@
     $('tourBtn').hidden = !state.scenario.tour;
   }
 
+  function renderParam() {
+    const p = state.scenario.param;
+    const seg = $('paramSeg');
+    seg.hidden = !p;
+    seg.innerHTML = '';
+    if (!p) return;
+    const lab = document.createElement('span');
+    lab.className = 'seg-label';
+    lab.textContent = p.label;
+    seg.appendChild(lab);
+    p.values.forEach((val) => {
+      const b = document.createElement('button');
+      b.className = 'seg-btn' + (val === p.value ? ' active' : '');
+      b.textContent = p.format ? p.format(val) : String(val);
+      b.onclick = () => {
+        if (val === p.value) return;
+        tour.end('close');
+        p.value = val;
+        setSpeed(defaultSpeed(state.scenario));
+        renderVariants();
+        reset();
+      };
+      seg.appendChild(b);
+    });
+  }
+
   function renderVariants() {
+    renderParam();
     const seg = $('variantSeg');
     seg.innerHTML = '';
     state.scenario.variants.forEach((v, i) => {
@@ -256,12 +307,14 @@
   function renderCompare(o) {
     const v = variant();
     const variants = state.scenario.variants;
-    const max = Math.max(1e-9, ...variants.map((vv) => (state.results[vv.id] ? state.results[vv.id].val : 0)));
+    const pv = paramValue();
+    const res = (vv) => state.results[resKey(vv.id, pv)];
+    const max = Math.max(1e-9, ...variants.map((vv) => (res(vv) ? res(vv).val : 0)));
     $('compareTitle').textContent = o.title;
     $('compare').innerHTML =
       variants
         .map((vv) => {
-          const r = state.results[vv.id];
+          const r = res(vv);
           const running = vv.id === v.id && o.pending && !r;
           const pct = r ? Math.max(0.6, (r.val / max) * 100) : 0;
           const head = r ? o.value(r) : running ? o.pending : 'not run yet';
@@ -276,7 +329,8 @@
   }
 
   function ratioLine(variants, o) {
-    const rs = variants.map((vv) => state.results[vv.id]);
+    const pv = paramValue();
+    const rs = variants.map((vv) => state.results[resKey(vv.id, pv)]);
     if (rs.some((r) => !r || !r.val)) {
       return '<p class="cmp-ratio muted">Run both layouts to compare them.</p>';
     }
@@ -316,7 +370,8 @@
     return Math.round(f / 1e3) + ' thousand×';
   }
   function fmtDur(ms) {
-    return ms >= 1000 ? (ms / 1000).toFixed(1) + ' s' : Math.round(ms) + ' ms';
+    if (ms >= 1000) return (ms / 1000).toFixed(1) + ' s';
+    return (ms >= 10 ? Math.round(ms) : +ms.toFixed(1)) + ' ms';
   }
 
   // ---- latency editor ----
@@ -413,8 +468,10 @@
   if (sc) state.scenario = sc;
   const vi = state.scenario.variants.findIndex((v) => v.id === q.get('variant'));
   if (vi >= 0) state.variantIdx = vi;
+  const pq = parseInt(q.get('particles'), 10);
+  if (state.scenario.param && state.scenario.param.values.includes(pq)) state.scenario.param.value = pq;
   const sp = parseFloat(q.get('speed'));
-  if (sp > 0) state.msPerNs = Math.min(200, Math.max(0.2, sp));
+  state.msPerNs = sp > 0 ? Math.min(200, Math.max(0.2, sp)) : defaultSpeed(state.scenario);
   $('speed').value = speedToSlider(state.msPerNs);
   renderScenarioTabs();
   renderVariants();
