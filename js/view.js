@@ -52,6 +52,7 @@
   };
   const coreX = (i) => 150 + i * 300;
   const busMid = G.busY + G.busH / 2;
+  const memLane = (G.busY + G.busH + G.memY) / 2; // gap between interconnect and memory
   const memRowW = SLOTS * G.mSlotW + (SLOTS - 1) * G.mSlotGap;
   const memCX = G.mSlotX0 + memRowW / 2;
   const cSlotX0 = (cx) => cx - (SLOTS * G.cSlotW + (SLOTS - 1) * G.cSlotGap) / 2;
@@ -497,7 +498,8 @@
       const g = this.gPackets;
       while (g.firstChild) g.removeChild(g.firstChild);
       const rowOf = (line) => this.rows.find((r) => r.line === line);
-      const cacheBottom = (i) => [coreX(i), G.cacheY + G.cacheH];
+      // Packets start/stop mid-gap below the cache box, never on its edge.
+      const cacheEnd = (i) => [coreX(i), (G.cacheY + G.cacheH + G.busY) / 2];
 
       for (const a of sim.anims) {
         if (a.start > sim.time) continue;
@@ -515,33 +517,34 @@
         }
 
         if (a.kind === 'inv' || a.kind === 'snoop') {
-          const from = cacheBottom(a.from);
-          const to = cacheBottom(a.to);
+          const from = cacheEnd(a.from);
+          const to = cacheEnd(a.to);
           const pts = [from, [from[0], busMid], [to[0], busMid], to];
           const pos = along(pts, p);
           const pg = el('g', { transform: `translate(${pos[0]},${pos[1]})` }, g);
-          el('circle', { r: 15, fill: KIND[a.kind].color, class: 'pkt' }, pg);
+          el('circle', { r: 14, fill: KIND[a.kind].color, class: 'pkt' }, pg);
           txt(pg, 0, 3.5, KIND[a.kind].label, 't-pkt', { 'text-anchor': 'middle' });
           continue;
         }
 
         if (a.kind === 'wb' || a.kind === 'fetch') {
           const row = rowOf(a.line);
-          const memPt = row ? [memCX, row.y + row.h / 2] : [memCX, G.memY + 40];
           const cpuId = a.kind === 'wb' ? a.from : a.to;
-          const cb = cacheBottom(cpuId);
+          const ce = cacheEnd(cpuId);
           let pts;
-          if (!row && this.memGeo.compact) {
-            pts = [cb, [cb[0], G.memY + 24]];
-            if (a.kind === 'fetch') pts = pts.reverse();
-          } else if (row && this.memGeo.compact) {
-            // Compact grid: each core gets its own vertical channel, so
-            // simultaneous fetches don't pile up on one wire.
+          if (this.memGeo.compact) {
+            // Compact grid: each core has its own vertical channel (cores are
+            // 300 units apart, chips ~170 wide, so simultaneous fetches never
+            // collide). Fetches rise from the memory lane under the core; the
+            // dashed row highlight marks which line is being read.
             if (a.kind === 'wb' && p >= 1) continue;
-            const lane = G.memY - 26; // gap between interconnect and memory box
-            const tx = a.kind === 'wb' && a.slots && a.slots.length ? row.slots[a.slots[0]].cx : row.cx;
-            pts = [cb, [cb[0], lane], [tx, lane], [tx, row.y + row.h / 2]];
-            if (a.kind === 'fetch') pts = pts.reverse();
+            if (a.kind === 'fetch' || !row) {
+              pts = [[ce[0], memLane], ce];
+              if (a.kind === 'wb') pts = pts.reverse();
+            } else {
+              const tx = a.slots && a.slots.length ? row.slots[a.slots[0]].cx : row.cx;
+              pts = [ce, [ce[0], memLane], [tx, memLane], [tx, row.y + row.h / 2]];
+            }
           } else if (a.kind === 'wb' && row) {
             // Write-back: dock onto the slot(s) that actually changed (e.g. c[0]),
             // then vanish; the slot pulses as the new value lands.
@@ -549,23 +552,40 @@
             const slots = a.slots && a.slots.length ? a.slots : [0];
             const tx = slots.reduce((sum, k) => sum + row.slots[k].cx, 0) / slots.length;
             const lane = row.y - 18;
-            pts = [cb, [cb[0], busMid], [memCX, busMid], [memCX, lane], [tx, lane], [tx, row.y + row.h / 2]];
+            pts = [ce, [ce[0], busMid], [memCX, busMid], [memCX, lane], [tx, lane], [tx, row.y + row.h / 2]];
           } else {
-            pts = [cb, [cb[0], busMid], [memCX, busMid], [memCX, G.memY + 6], memPt];
+            // Fetch: leave from just above the row, ride the interconnect, and
+            // stop in the gap under the requesting core's cache.
+            const lane = row ? row.y - 18 : G.memY + 40;
+            pts = [ce, [ce[0], busMid], [memCX, busMid], [memCX, lane]];
             if (a.kind === 'fetch') pts = pts.reverse();
           }
           const pos = along(pts, p);
-          const pg = el('g', { transform: `translate(${pos[0]},${pos[1]})` }, g);
-          const col = KIND[a.kind].color;
-          el('rect', { x: -42, y: -11, width: 84, height: 22, rx: 5, class: 'pkt-bg', stroke: col }, pg);
-          for (let s = 0; s < SLOTS; s++) {
-            const look = this.slotLook(sim, a.line, s);
-            el('rect', { x: -38 + s * 9.6, y: -6, width: 8.4, height: 12, rx: 1.5, fill: look.fill || 'var(--slot-empty)' }, pg);
-          }
-          const lab = txt(pg, 0, -17, KIND[a.kind].label, 't-pktlab', { 'text-anchor': 'middle' });
-          lab.setAttribute('fill', col);
+          this.drawLineChip(sim, g, pos, a);
         }
       }
+    }
+
+    /**
+     * A 64-byte line in flight: one 22-unit-tall chip holding the 8-slot glyph
+     * and its label, centred on `pos`. Short enough to sit inside the
+     * interconnect (36 tall) and the gaps between boxes (54 tall).
+     */
+    drawLineChip(sim, g, pos, a) {
+      const col = KIND[a.kind].color;
+      const label = KIND[a.kind].label;
+      const glyphW = SLOTS * 9.6 - 1.2;
+      const labelW = label.length * 6.1;
+      const w = 7 + glyphW + 7 + labelW + 9;
+      const x0 = -w / 2;
+      const pg = el('g', { transform: `translate(${pos[0]},${pos[1]})` }, g);
+      el('rect', { x: x0, y: -11, width: w, height: 22, rx: 11, class: 'pkt-bg', stroke: col }, pg);
+      for (let s = 0; s < SLOTS; s++) {
+        const look = this.slotLook(sim, a.line, s);
+        el('rect', { x: x0 + 7 + s * 9.6, y: -6, width: 8.4, height: 12, rx: 1.5, fill: look.fill || 'var(--slot-empty)' }, pg);
+      }
+      const lab = txt(pg, x0 + 7 + glyphW + 7, 3.8, label, 't-pktlab');
+      lab.setAttribute('fill', col);
     }
   }
 
