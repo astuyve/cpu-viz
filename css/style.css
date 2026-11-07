@@ -278,6 +278,7 @@ details[open].card summary { margin-bottom: 10px; }
 #viz .slot.mine { stroke: var(--ink); stroke-width: 2; }
 #viz .strike { stroke: var(--muted); stroke-width: 2; }
 #viz .flash { fill: none; stroke-width: 3; }
+#viz .landing { fill: none; stroke: #f76b15; stroke-width: 3; }
 #viz .rowhl { fill: none; stroke-width: 2.5; stroke-dasharray: 6 4; }
 #viz .pkt { stroke: var(--panel); stroke-width: 2; }
 #viz .pkt-bg { fill: var(--panel); stroke-width: 2; }

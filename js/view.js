@@ -204,7 +204,8 @@
           const lab = owner != null ? sim.variant.slotName(owner) : sim.variant.fillerName(line, s);
           txt(gm, sx + G.mSlotW / 2, y + 15, lab, owner != null ? 't-tiny on-color' : 't-tiny muted', { 'text-anchor': 'middle' });
           const v = txt(gm, sx + G.mSlotW / 2, y + 36, owner != null ? '0' : '', owner != null ? 't-memval on-color' : 't-memval muted', { 'text-anchor': 'middle' });
-          row.slots.push({ v, owner });
+          const ring = el('rect', { x: sx - 3, y: y - 3, width: G.mSlotW + 6, height: G.rowH + 6, rx: 8, class: 'landing', opacity: 0 }, gm);
+          row.slots.push({ v, owner, ring, cx: sx + G.mSlotW / 2 });
         }
         row.stale = txt(gm, G.mSlotX0 + memRowW + 18, y + 28, '', 't-small stale');
         this.rows.push(row);
@@ -382,6 +383,13 @@
           s.v.style.opacity = holder && s.owner != null && holder.line.data[k] !== data[k] ? 0.45 : 1;
         });
         setText(row.stale, holder ? `stale: Core ${holder.id} has newer copy` : '');
+        // pulse the slots a write-back just landed on (fades over 40 ns of sim time)
+        const w = sim.memWrites.get(row.line);
+        const age = w ? sim.time - w.t : Infinity;
+        row.slots.forEach((s, k) => {
+          const on = w && w.slots.includes(k) && age < 40;
+          s.ring.setAttribute('opacity', on ? 1 - age / 40 : 0);
+        });
         const k = active.get(row.line);
         row.hl.setAttribute('opacity', k ? 1 : 0);
         if (k) row.hl.setAttribute('stroke', KIND[k].color);
@@ -427,8 +435,19 @@
           const memPt = row ? [memCX, row.y + G.rowH / 2] : [memCX, G.memY + 40];
           const cpuId = a.kind === 'wb' ? a.from : a.to;
           const cb = cacheBottom(cpuId);
-          let pts = [cb, [cb[0], busMid], [memCX, busMid], [memCX, G.memY + 6], memPt];
-          if (a.kind === 'fetch') pts = pts.reverse();
+          let pts;
+          if (a.kind === 'wb' && row) {
+            // Write-back: dock onto the slot(s) that actually changed (e.g. c[0]),
+            // then vanish; the slot pulses as the new value lands.
+            if (p >= 1) continue;
+            const slots = a.slots && a.slots.length ? a.slots : [0];
+            const tx = slots.reduce((sum, k) => sum + row.slots[k].cx, 0) / slots.length;
+            const lane = row.y - 18;
+            pts = [cb, [cb[0], busMid], [memCX, busMid], [memCX, lane], [tx, lane], [tx, row.y + G.rowH / 2]];
+          } else {
+            pts = [cb, [cb[0], busMid], [memCX, busMid], [memCX, G.memY + 6], memPt];
+            if (a.kind === 'fetch') pts = pts.reverse();
+          }
           const pos = along(pts, p);
           const pg = el('g', { transform: `translate(${pos[0]},${pos[1]})` }, g);
           const col = KIND[a.kind].color;

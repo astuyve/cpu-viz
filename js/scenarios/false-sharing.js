@@ -45,7 +45,7 @@
         body: (lat, ms) =>
           'Core 0 wants to run <code>counter[0]++</code>, but its cache is empty. This is a <b>cold miss</b>. ' +
           `It requests the whole line from DRAM, which takes about ${ns(lat, 'memRead')} (slowed to ${onScreen(lat, 'memRead', ms)} here). ` +
-          'The core can do nothing else while it waits. Cores 1–3 miss too, and queue up for the same line.',
+          'Instructions that need <code>counter[0]</code> must wait for the load. Cores 1–3 miss too, and queue up for the same line.',
       },
       {
         title: 'Exclusive, then Modified',

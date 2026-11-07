@@ -77,6 +77,7 @@
       }));
 
       this.locks = new Map(); // line -> { busy, owner, queue: [] }
+      this.memWrites = new Map(); // line -> { slots, t } most recent write-back
       this.anims = [];
       this.animSeq = 0;
       this.log = [];
@@ -308,7 +309,9 @@
       steps.push((next) => this.phaseFetch(tx, excl, others.length > 0 && !excl, next));
       steps.push(() => this.finishTx(tx));
 
-      const run = (i) => steps[i](() => run(i + 1));
+      // Each phase starts in its own event, so a breakpoint on one phase's
+      // end pauses before the next phase begins.
+      const run = (i) => steps[i](() => this.at(this.time, () => run(i + 1)));
       run(0);
     }
 
@@ -318,12 +321,14 @@
       const t1 = t0 + this.lat.writeback;
       old.pendingInv = true;
       cpu.waiting = { phase: 'evict', line: old.addr, start: t0, end: t1 };
-      this.anim({ kind: 'wb', from: cpu.id, line: old.addr, data: old.data.slice(), start: t0, end: t1 });
+      const slots = this.dirtySlots(old.addr, old.data);
+      this.anim({ kind: 'wb', from: cpu.id, line: old.addr, data: old.data.slice(), slots, start: t0, end: t1 });
       this.narrate(`Core ${cpu.id} evicts dirty line ${hex(old.addr)} back to DRAM to make room.`, cpu.id);
       this.emit('phase-start', { phase: 'evict', cpu: cpu.id, line: old.addr });
       this.at(t1, () => {
         this.emit('phase-end', { phase: 'evict', cpu: cpu.id, line: old.addr });
         this.memory.set(old.addr, old.data.slice());
+        this.memWrites.set(old.addr, { slots, t: this.time });
         this.stats.writebacks++;
         old.state = 'I';
         old.pendingInv = false;
@@ -362,13 +367,24 @@
       });
     }
 
+    /** Slots of `data` that differ from what DRAM currently holds for `line`. */
+    dirtySlots(line, data) {
+      const mem = this.memory.get(line) || [];
+      const out = [];
+      data.forEach((v, k) => {
+        if (v !== (mem[k] || 0)) out.push(k);
+      });
+      return out;
+    }
+
     phaseWriteback(tx, dirty, next) {
       const { cpu, line } = tx;
       const t0 = this.time;
       const t1 = t0 + this.lat.writeback;
       const data = tx.wbData || dirty.line.data.slice();
       cpu.waiting = { phase: 'writeback', from: dirty.id, line, start: t0, end: t1 };
-      this.anim({ kind: 'wb', from: dirty.id, line, data, start: t0, end: t1 });
+      const slots = this.dirtySlots(line, data);
+      this.anim({ kind: 'wb', from: dirty.id, line, data, slots, start: t0, end: t1 });
       this.narrate(
         `Core ${dirty.id} had the only up-to-date (Modified) copy of ${hex(line)}, so it writes it back to main memory (${this.lat.writeback} ns). Core ${cpu.id} is still stalled.`,
         dirty.id,
@@ -377,6 +393,7 @@
       this.emit('phase-start', { phase: 'writeback', cpu: cpu.id, line, from: dirty.id });
       this.at(t1, () => {
         this.memory.set(line, data.slice());
+        this.memWrites.set(line, { slots, t: this.time });
         this.stats.writebacks++;
         this.emit('phase-end', { phase: 'writeback', cpu: cpu.id, line, from: dirty.id });
         next();
@@ -392,7 +409,7 @@
       cpu.waiting = { phase: 'fetch', line, start: t0, end: t1 };
       this.anim({ kind: 'fetch', to: cpu.id, line, data, start: t0, end: t1 });
       this.narrate(
-        `Core ${cpu.id} fetches line ${hex(line)} from main memory, which takes ~${this.lat.memRead} ns. That is roughly ${Math.round(this.lat.memRead / this.lat.l1)}× slower than an L1 hit, and the core does no useful work while it waits.`,
+        `Core ${cpu.id} fetches line ${hex(line)} from main memory, which takes ~${this.lat.memRead} ns. That is roughly ${Math.round(this.lat.memRead / this.lat.l1)}× slower than an L1 hit, and instructions that need this data must wait for it.`,
         cpu.id,
         { log: `Core ${cpu.id} fetches ${hex(line)} ← DRAM` }
       );
