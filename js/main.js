@@ -74,7 +74,19 @@
     return state.scenario.variants[state.variantIdx];
   }
 
+  /** Save a run's result for the comparison panel (called every panel refresh and before a reset). */
+  function recordResult(sim) {
+    const v = sim.variant;
+    if (!state.scenario.variants.includes(v)) return; // scenario changed
+    if (state.scenario.metric === 'completion') {
+      if (sim.finished) state.results[v.id] = { val: sim.doneAt, fetched: sim.stats.bytesFetched };
+    } else if (sim.time >= 50) {
+      state.results[v.id] = { val: sim.totalOps() / (sim.time / 1000), time: sim.time };
+    }
+  }
+
   function reset() {
+    if (state.sim) recordResult(state.sim);
     state.sim = new NS.Sim({ numCpus: 4, variant: variant(), lat });
     view.build(state.sim);
     state.lastLogSeq = -1;
@@ -104,6 +116,7 @@
       nav.appendChild(b);
     });
     $('scenarioSummary').textContent = state.scenario.summary;
+    $('tourBtn').hidden = !state.scenario.tour;
   }
 
   function renderVariants() {
@@ -112,7 +125,7 @@
     state.scenario.variants.forEach((v, i) => {
       const b = document.createElement('button');
       b.className = 'seg-btn' + (i === state.variantIdx ? ' active' : '');
-      b.innerHTML = `${v.label} <span class="seg-tag ${v.id}">${v.tag}</span>`;
+      b.innerHTML = `${v.label} <span class="seg-tag ${v.tone || ''}">${v.tag}</span>`;
       b.onclick = () => {
         tour.end('close');
         state.variantIdx = i;
@@ -124,7 +137,7 @@
   }
 
   // ---- code panel with a tiny C highlighter ----
-  const KW = /\b(struct|int64_t|char|void|for|int|alignas|sizeof|return)\b/g;
+  const KW = /\b(struct|int64_t|char|void|for|int|double|alignas|sizeof|return)\b/g;
   function esc(s) {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
@@ -173,48 +186,104 @@
     }
     while (log.children.length > 80) log.removeChild(log.lastChild);
 
-    // stats
+    if (state.scenario.metric === 'completion') renderCompletion(sim, v);
+    else renderThroughput(sim, v);
+  }
+
+  function statRows(rows) {
+    $('stats').innerHTML = rows.map(([k, val]) => `<dt>${k}</dt><dd class="mono">${val}</dd>`).join('');
+  }
+
+  /** Open-ended workloads (false sharing): operations per µs, higher is better. */
+  function renderThroughput(sim, v) {
     const ops = sim.totalOps();
     const us = sim.time / 1000;
     const thr = us > 0 ? ops / us : 0;
     const s = sim.stats;
-    $('stats').innerHTML = [
-      ['Increments (all cores)', ops.toLocaleString()],
+    const U = v.unit;
+    statRows([
+      [`${cap(U.many)} (all cores)`, ops.toLocaleString()],
       ['Throughput', us > 0 ? `${fmtNum(thr)} / µs` : '—'],
       ['L1 hits', s.hits.toLocaleString()],
       ['Cache misses', s.misses.toLocaleString()],
       ['Invalidations sent', s.invalidations.toLocaleString()],
       ['Write-backs to DRAM', s.writebacks.toLocaleString()],
       ['Line fetches from DRAM', s.fetches.toLocaleString()],
-    ]
-      .map(([k, val]) => `<dt>${k}</dt><dd class="mono">${val}</dd>`)
-      .join('');
+    ]);
+    recordResult(sim);
+    renderCompare({
+      value: (r) => `${fmtNum(r.val)} ${U.per}/µs`,
+      sub: (r) => `measured over ${fmtClock(r.time)} of simulated time`,
+      higherIsBetter: true,
+      title: 'Throughput',
+      tag: 'running',
+    });
+  }
 
-    // comparison
-    if (sim.time >= 50) state.results[v.id] = { thr, time: sim.time, ops };
+  /** Finite workloads (AoS vs SoA): time to finish, lower is better. */
+  function renderCompletion(sim, v) {
+    const s = sim.stats;
+    const pct = s.bytesFetched ? Math.round((s.bytesUsed / s.bytesFetched) * 100) : 0;
+    statRows([
+      ['Elapsed', sim.finished ? `${fmtClock(sim.doneAt)} (done)` : fmtClock(sim.time)],
+      [cap(v.unit.many), sim.totalOps().toLocaleString()],
+      ['L1 hits', s.hits.toLocaleString()],
+      ['Cache misses', s.misses.toLocaleString()],
+      ['Lines fetched from DRAM', s.fetches.toLocaleString()],
+      ['Bytes fetched', `${s.bytesFetched.toLocaleString()} B`],
+      ['Bytes actually used', s.bytesFetched ? `${s.bytesUsed.toLocaleString()} B (${pct}%)` : '—'],
+    ]);
+    recordResult(sim);
+    renderCompare({
+      value: (r) => fmtClock(r.val),
+      sub: (r) => `to finish · ${r.fetched.toLocaleString()} B fetched from DRAM`,
+      pending: sim.finished ? null : `running… ${fmtClock(sim.time)}`,
+      higherIsBetter: false,
+      title: 'Time to finish',
+      tag: sim.finished ? 'this run' : 'running',
+    });
+  }
+
+  /** Bar per variant (its last result) plus a ratio line. */
+  function renderCompare(o) {
+    const v = variant();
     const variants = state.scenario.variants;
-    const max = Math.max(1e-9, ...variants.map((vv) => (state.results[vv.id] ? state.results[vv.id].thr : 0)));
+    const max = Math.max(1e-9, ...variants.map((vv) => (state.results[vv.id] ? state.results[vv.id].val : 0)));
+    $('compareTitle').textContent = o.title;
     $('compare').innerHTML =
       variants
         .map((vv) => {
           const r = state.results[vv.id];
-          const pct = r ? Math.max(0.6, (r.thr / max) * 100) : 0;
+          const running = vv.id === v.id && o.pending && !r;
+          const pct = r ? Math.max(0.6, (r.val / max) * 100) : 0;
+          const head = r ? o.value(r) : running ? o.pending : 'not run yet';
+          const sub = r ? o.sub(r) : running ? '&nbsp;' : `switch to “${vv.label}” to measure`;
           return `<div class="cmp-row${vv.id === v.id ? ' current' : ''}">
-            <div class="cmp-head"><span>${vv.label}</span><span class="mono">${r ? fmtNum(r.thr) + ' ++/µs' : 'not run yet'}</span></div>
-            <div class="cmp-track"><div class="cmp-bar ${vv.id}" style="width:${pct}%"></div></div>
-            <div class="cmp-sub">${r ? `measured over ${fmtClock(r.time)} of simulated time` : `switch to “${vv.label}” to measure`}</div>
+            <div class="cmp-head"><span>${vv.label}${vv.id === v.id ? ` <span class="muted">(${o.tag})</span>` : ''}</span><span class="mono">${head}</span></div>
+            <div class="cmp-track"><div class="cmp-bar ${vv.tone || ''}" style="width:${pct}%"></div></div>
+            <div class="cmp-sub">${sub}</div>
           </div>`;
         })
-        .join('') + ratioLine(variants);
+        .join('') + ratioLine(variants, o);
   }
 
-  function ratioLine(variants) {
-    const [a, b] = variants.map((v) => state.results[v.id]);
-    if (!a || !b || !a.thr || !b.thr) {
+  function ratioLine(variants, o) {
+    const rs = variants.map((vv) => state.results[vv.id]);
+    if (rs.some((r) => !r || !r.val)) {
       return '<p class="cmp-ratio muted">Run both layouts to compare them.</p>';
     }
-    const r = b.thr / a.thr;
-    return `<p class="cmp-ratio"><strong>${variants[1].label}</strong> is <strong>${r >= 10 ? Math.round(r) : r.toFixed(1)}×</strong> faster in this model.</p>`;
+    let best = 0;
+    rs.forEach((r, i) => {
+      if (o.higherIsBetter ? r.val > rs[best].val : r.val < rs[best].val) best = i;
+    });
+    const other = rs[best === 0 ? 1 : 0];
+    const ratio = o.higherIsBetter ? rs[best].val / other.val : other.val / rs[best].val;
+    const txt = ratio >= 10 ? Math.round(ratio) : ratio.toFixed(1);
+    return `<p class="cmp-ratio"><strong>${variants[best].label}</strong> is <strong>${txt}×</strong> faster in this model.</p>`;
+  }
+
+  function cap(s) {
+    return s.charAt(0).toUpperCase() + s.slice(1);
   }
 
   function fmtNum(n) {
@@ -332,6 +401,8 @@
   // ---- boot ----
   // Optional deep-link params: ?variant=padded&speed=5&t=250&paused=1
   const q = new URLSearchParams(location.search);
+  const sc = NS.scenarios.find((x) => x.id === q.get('scenario'));
+  if (sc) state.scenario = sc;
   const vi = state.scenario.variants.findIndex((v) => v.id === q.get('variant'));
   if (vi >= 0) state.variantIdx = vi;
   const sp = parseFloat(q.get('speed'));

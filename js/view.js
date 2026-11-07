@@ -187,30 +187,63 @@
       el('rect', { x: G.memX, y: G.memY, width: G.memW, height: G.memH, rx: 14, class: 'box mem' }, gm);
       txt(gm, G.memX + 22, G.memY + 32, 'Main memory (DRAM)', 't-title');
       this.memLat = txt(gm, G.memX + G.memW - 22, G.memY + 32, '', 't-small muted', { 'text-anchor': 'end' });
-      sim.variant.memoryLines.forEach((line, r) => {
-        const y = G.rowY0 + r * G.rowGap;
-        const row = { line, y, slots: [] };
-        row.hl = el('rect', { x: G.mSlotX0 - 8, y: y - 8, width: memRowW + 16, height: G.rowH + 16, rx: 10, class: 'rowhl', opacity: 0 }, gm);
-        txt(gm, G.mSlotX0 - 16, y + 20, hex(line), 't-mono', { 'text-anchor': 'end' });
-        txt(gm, G.mSlotX0 - 16, y + 36, 'cache line', 't-tiny muted', { 'text-anchor': 'end' });
-        for (let s = 0; s < SLOTS; s++) {
-          const sx = G.mSlotX0 + s * (G.mSlotW + G.mSlotGap);
-          const owner = sim.ownerOf(line, s);
-          const r2 = el('rect', { x: sx, y, width: G.mSlotW, height: G.rowH, rx: 6, class: 'slot' }, gm);
-          if (owner != null) {
-            r2.setAttribute('fill', CPU_COLORS[owner]);
-            r2.setAttribute('class', 'slot owned');
-          }
-          const lab = owner != null ? sim.variant.slotName(owner) : sim.variant.fillerName(line, s);
-          txt(gm, sx + G.mSlotW / 2, y + 15, lab, owner != null ? 't-tiny on-color' : 't-tiny muted', { 'text-anchor': 'middle' });
-          const v = txt(gm, sx + G.mSlotW / 2, y + 36, owner != null ? '0' : '', owner != null ? 't-memval on-color' : 't-memval muted', { 'text-anchor': 'middle' });
-          const ring = el('rect', { x: sx - 3, y: y - 3, width: G.mSlotW + 6, height: G.rowH + 6, rx: 8, class: 'landing', opacity: 0 }, gm);
-          row.slots.push({ v, owner, ring, cx: sx + G.mSlotW / 2 });
+      const lines = sim.variant.memoryLines;
+      const showValues = sim.variant.showValues !== false;
+      // Up to 4 lines: roomy single column. More: compact two-column grid.
+      const compact = lines.length > 4;
+      const geo = compact
+        ? { compact, perCol: Math.ceil(lines.length / 2), x0s: [170, 690], y0: G.memY + 52, gap: 36, h: 28, sw: 50, sg: 4 }
+        : { compact, perCol: lines.length, x0s: [G.mSlotX0], y0: G.rowY0, gap: G.rowGap, h: G.rowH, sw: G.mSlotW, sg: G.mSlotGap };
+      this.memGeo = geo;
+      lines.forEach((line, r) => {
+        const x0 = geo.x0s[Math.floor(r / geo.perCol)];
+        const y = geo.y0 + (r % geo.perCol) * geo.gap;
+        const rowW = SLOTS * geo.sw + (SLOTS - 1) * geo.sg;
+        const row = { line, y, x0, w: rowW, h: geo.h, cx: x0 + rowW / 2, slots: [] };
+        const hp = compact ? 4 : 8;
+        row.hl = el('rect', { x: x0 - hp, y: y - hp, width: rowW + hp * 2, height: geo.h + hp * 2, rx: compact ? 7 : 10, class: 'rowhl', opacity: 0 }, gm);
+        if (compact) {
+          txt(gm, x0 - 10, y + geo.h / 2 + 4, hex(line), 't-mono', { 'text-anchor': 'end' });
+        } else {
+          txt(gm, x0 - 16, y + 20, hex(line), 't-mono', { 'text-anchor': 'end' });
+          txt(gm, x0 - 16, y + 36, 'cache line', 't-tiny muted', { 'text-anchor': 'end' });
         }
-        row.stale = txt(gm, G.mSlotX0 + memRowW + 18, y + 28, '', 't-small stale');
+        for (let s = 0; s < SLOTS; s++) {
+          const sx = x0 + s * (geo.sw + geo.sg);
+          const look = this.slotLook(sim, line, s);
+          const r2 = el('rect', { x: sx, y, width: geo.sw, height: geo.h, rx: compact ? 4 : 6, class: look.fill ? 'slot owned' : 'slot' }, gm);
+          if (look.fill) r2.setAttribute('fill', look.fill);
+          let v;
+          if (showValues) {
+            const owned = look.owner != null;
+            txt(gm, sx + geo.sw / 2, y + 15, look.label, owned ? 't-tiny on-color' : 't-tiny muted', { 'text-anchor': 'middle' });
+            v = txt(gm, sx + geo.sw / 2, y + 36, owned ? '0' : '', owned ? 't-memval on-color' : 't-memval muted', { 'text-anchor': 'middle' });
+          } else {
+            v = txt(gm, sx + geo.sw / 2, y + geo.h / 2 + 4, look.label, 't-tiny t-strong', { 'text-anchor': 'middle' });
+            v.style.fill = look.ink || 'var(--muted)';
+          }
+          const ring = el('rect', { x: sx - 3, y: y - 3, width: geo.sw + 6, height: geo.h + 6, rx: 7, class: 'landing', opacity: 0 }, gm);
+          row.slots.push({ v, owner: look.owner != null ? look.owner : null, ring, cx: sx + geo.sw / 2 });
+        }
+        row.stale = txt(gm, x0 + rowW + 18, y + 28, '', 't-small stale');
         this.rows.push(row);
       });
-      txt(gm, G.mSlotX0, G.memY + G.memH - 14, 'Byte offset within each line: 0 · 8 · 16 · 24 · 32 · 40 · 48 · 56', 't-tiny muted');
+      if (!compact) {
+        txt(gm, G.mSlotX0, G.memY + G.memH - 14, 'Byte offset within each line: 0 · 8 · 16 · 24 · 32 · 40 · 48 · 56', 't-tiny muted');
+      }
+    }
+
+    /**
+     * How to draw one 8-byte slot: { label, short?, fill?, ink?, owner? }.
+     * Scenarios can supply variant.slotStyle(line, slot); otherwise slots are
+     * coloured by the core whose variable lives there.
+     */
+    slotLook(sim, line, k) {
+      const v = sim.variant;
+      if (v.slotStyle) return v.slotStyle(line, k);
+      const owner = sim.ownerOf(line, k);
+      if (owner == null) return { label: v.fillerName(line, k), fill: null, owner: null };
+      return { label: v.slotName(owner), fill: CPU_COLORS[owner], ink: '#fff', owner };
     }
 
     // ---- spotlight (used by the guided tour) ----
@@ -236,7 +269,8 @@
       if (kind === 'row') {
         const row = this.rows.find((r) => r.line === parseInt(arg, 16));
         if (!row) return null;
-        return { x: G.mSlotX0 - 120, y: row.y - 14, w: memRowW + 120 + 230, h: G.rowH + 28 };
+        if (this.memGeo.compact) return { x: row.x0 - 70, y: row.y - 8, w: row.w + 80, h: row.h + 16 };
+        return { x: row.x0 - 120, y: row.y - 14, w: row.w + 120 + 230, h: row.h + 28 };
       }
       return null;
     }
@@ -262,6 +296,8 @@
     // ---- per frame ----
     render(sim, now) {
       const L = sim.lat;
+      const U = sim.variant.unit || { one: 'increment', many: 'increments', per: '++' };
+      const showValues = sim.variant.showValues !== false;
       setText(this.memLat, `read a line ≈ ${L.memRead} ns · write back ≈ ${L.writeback} ns`);
 
       // cores
@@ -282,21 +318,30 @@
         } else if (cpu.status === 'stall') {
           pillCls = 'pill stall';
           pillTxt = 'STALLED ' + NS.fmtNs(sim.time - cpu.stallSince);
+        } else if (cpu.status === 'done') {
+          pillCls = 'pill done';
+          pillTxt = 'DONE';
         }
         c.pill.setAttribute('class', pillCls);
         setText(c.pillText, pillTxt);
         c.box.setAttribute('class', 'box core' + (cpu.status === 'stall' ? ' stalled' : ''));
 
-        setText(c.ops, `${cpu.ops.toLocaleString()} increment${cpu.ops === 1 ? '' : 's'}`);
-        setText(c.avg, cpu.ops ? `${NS.fmtNs(sim.time / cpu.ops)} per ++` : '');
+        const elapsed = cpu.doneAt != null ? cpu.doneAt : sim.time;
+        setText(c.ops, `${cpu.ops.toLocaleString()} ${cpu.ops === 1 ? U.one : U.many}`);
+        setText(c.avg, cpu.ops ? `${NS.fmtNs(elapsed / cpu.ops)} per ${U.per}` : '');
 
         // detail + phase progress
         let detail = '';
         let prog = 0;
         let progCol = 'var(--muted)';
         const w = cpu.waiting;
-        if (cpu.status === 'exec') {
-          detail = `L1 hit: write to own cache (${L.l1} ns)`;
+        if (cpu.status === 'done') {
+          detail = `Finished in ${NS.fmtNs(cpu.doneAt)}`;
+          prog = 1;
+          progCol = 'var(--accent)';
+        } else if (cpu.status === 'exec') {
+          const verb = cpu.op && cpu.op.kind === 'read' ? 'read from' : 'write to';
+          detail = `L1 hit: ${verb} own cache (${L.l1} ns)`;
           prog = 1;
           progCol = 'var(--ok)';
         } else if (w) {
@@ -319,7 +364,7 @@
         c.prog.setAttribute('fill', progCol);
 
         // utilization
-        const t = Math.max(sim.time, 1e-9);
+        const t = Math.max(elapsed, 1e-9);
         const busy = sim.liveExec(cpu) / t;
         const stall = sim.liveStall(cpu) / t;
         const bw = G.coreW - 28;
@@ -344,27 +389,36 @@
         c.strike.setAttribute('opacity', ln && invalid ? 1 : 0);
 
         c.slots.forEach((s, k) => {
-          const owner = ln ? sim.ownerOf(ln.addr, k) : null;
-          if (ln && owner != null) {
-            s.r.setAttribute('fill', CPU_COLORS[owner]);
-            s.r.setAttribute('class', 'slot owned' + (owner === i ? ' mine' : ''));
-            setText(s.v, fmtCount(ln.data[k]));
-            s.v.setAttribute('class', 't-slot on-color');
+          const look = ln ? this.slotLook(sim, ln.addr, k) : null;
+          if (look && look.fill) {
+            s.r.setAttribute('fill', look.fill);
+            s.r.setAttribute('class', 'slot owned' + (look.owner === i ? ' mine' : ''));
           } else {
             s.r.removeAttribute('fill');
             s.r.setAttribute('class', 'slot');
-            setText(s.v, '');
           }
-          const lab = ln ? (owner != null ? sim.variant.slotName(owner) : sim.variant.fillerName(ln.addr, k)) : '';
-          setText(s.lab, lab);
+          if (!look) {
+            setText(s.v, '');
+          } else if (showValues) {
+            setText(s.v, look.owner != null ? fmtCount(ln.data[k]) : '');
+            s.v.setAttribute('class', 't-slot on-color');
+          } else {
+            setText(s.v, look.label);
+            s.v.setAttribute('class', 't-slot');
+            s.v.style.fill = look.ink || 'var(--muted)';
+          }
+          setText(s.lab, look && showValues ? look.label : '');
         });
 
-        // hit flash on own slot + wire glow
-        const myAddr = sim.variant.addrFor(i);
-        const mySlot = NS.mem.slotOf(myAddr);
+        // flash the slot the core just accessed + wire glow
+        const op = cpu.op;
         const fa = Math.max(0, 1 - (now - this.flash[i]) / 260);
-        c.flashRect.setAttribute('x', c.slots[mySlot].x - 2);
-        c.flashRect.setAttribute('opacity', ln && ln.addr === NS.mem.lineOf(myAddr) ? fa : 0);
+        if (op && ln && ln.addr === NS.mem.lineOf(op.addr)) {
+          c.flashRect.setAttribute('x', c.slots[NS.mem.slotOf(op.addr)].x - 2);
+          c.flashRect.setAttribute('opacity', fa);
+        } else {
+          c.flashRect.setAttribute('opacity', 0);
+        }
         c.flashRect.setAttribute('stroke', col);
         c.wire.setAttribute('class', cpu.status === 'exec' ? 'wire hot' : 'wire');
         c.wire.style.stroke = cpu.status === 'exec' ? col : '';
@@ -379,7 +433,7 @@
         const data = sim.memory.get(row.line);
         const holder = sim.cpus.find((c) => c.line && c.line.addr === row.line && c.line.state === 'M');
         row.slots.forEach((s, k) => {
-          if (s.owner != null) setText(s.v, fmtCount(data[k]));
+          if (showValues && s.owner != null) setText(s.v, fmtCount(data[k]));
           s.v.style.opacity = holder && s.owner != null && holder.line.data[k] !== data[k] ? 0.45 : 1;
         });
         setText(row.stale, holder ? `stale: Core ${holder.id} has newer copy` : '');
@@ -432,18 +486,26 @@
 
         if (a.kind === 'wb' || a.kind === 'fetch') {
           const row = rowOf(a.line);
-          const memPt = row ? [memCX, row.y + G.rowH / 2] : [memCX, G.memY + 40];
+          const memPt = row ? [memCX, row.y + row.h / 2] : [memCX, G.memY + 40];
           const cpuId = a.kind === 'wb' ? a.from : a.to;
           const cb = cacheBottom(cpuId);
           let pts;
-          if (a.kind === 'wb' && row) {
+          if (row && this.memGeo.compact) {
+            // Compact grid: each core gets its own vertical channel, so
+            // simultaneous fetches don't pile up on one wire.
+            if (a.kind === 'wb' && p >= 1) continue;
+            const lane = G.memY - 26; // gap between interconnect and memory box
+            const tx = a.kind === 'wb' && a.slots && a.slots.length ? row.slots[a.slots[0]].cx : row.cx;
+            pts = [cb, [cb[0], lane], [tx, lane], [tx, row.y + row.h / 2]];
+            if (a.kind === 'fetch') pts = pts.reverse();
+          } else if (a.kind === 'wb' && row) {
             // Write-back: dock onto the slot(s) that actually changed (e.g. c[0]),
             // then vanish; the slot pulses as the new value lands.
             if (p >= 1) continue;
             const slots = a.slots && a.slots.length ? a.slots : [0];
             const tx = slots.reduce((sum, k) => sum + row.slots[k].cx, 0) / slots.length;
             const lane = row.y - 18;
-            pts = [cb, [cb[0], busMid], [memCX, busMid], [memCX, lane], [tx, lane], [tx, row.y + G.rowH / 2]];
+            pts = [cb, [cb[0], busMid], [memCX, busMid], [memCX, lane], [tx, lane], [tx, row.y + row.h / 2]];
           } else {
             pts = [cb, [cb[0], busMid], [memCX, busMid], [memCX, G.memY + 6], memPt];
             if (a.kind === 'fetch') pts = pts.reverse();
@@ -453,8 +515,8 @@
           const col = KIND[a.kind].color;
           el('rect', { x: -42, y: -11, width: 84, height: 22, rx: 5, class: 'pkt-bg', stroke: col }, pg);
           for (let s = 0; s < SLOTS; s++) {
-            const owner = sim.ownerOf(a.line, s);
-            el('rect', { x: -38 + s * 9.6, y: -6, width: 8.4, height: 12, rx: 1.5, fill: owner != null ? CPU_COLORS[owner] : 'var(--slot-empty)' }, pg);
+            const look = this.slotLook(sim, a.line, s);
+            el('rect', { x: -38 + s * 9.6, y: -6, width: 8.4, height: 12, rx: 1.5, fill: look.fill || 'var(--slot-empty)' }, pg);
           }
           const lab = txt(pg, 0, -17, KIND[a.kind].label, 't-pktlab', { 'text-anchor': 'middle' });
           lab.setAttribute('fill', col);

@@ -9,7 +9,7 @@ the nanoseconds each operation costs.
 Open `index.html` in a browser. There is no build step and no dependencies.
 (Or serve the folder: `python3 -m http.server` and visit http://localhost:8000.)
 
-Deep-link params: `?variant=padded&speed=5&t=250&paused=1`
+Deep-link params: `?scenario=aos-soa&variant=padded&speed=5&t=250&paused=1`
 (`speed` is milliseconds of screen time per simulated nanosecond).
 `?tour=1` starts the guided tour (`?tour=4` jumps to step 4).
 
@@ -28,6 +28,10 @@ it and fast-forward through earlier steps. Tours live on the scenario
 - **False sharing**: four threads increment their own counters. Packed into one
   64-byte line, the cores ping-pong ownership (invalidate → write-back → DRAM
   fetch) for every increment. Padded to a line each, they run from L1 at ~1 ns.
+- **AoS vs SoA**: four threads each sum the `x` of 8 particles (`{x, y, z, mass}`).
+  As an array of structs, each 64-byte line holds 2 useful values and 6 the loop
+  never reads (25% of fetched bytes used, 408 ns). As a struct of arrays, each
+  line is 8 consecutive `x` values (100% used, 108 ns). No prefetcher is modeled.
 
 ## Layout
 
@@ -40,5 +44,8 @@ it and fast-forward through earlier steps. Tours live on the scenario
 | `js/main.js` | Controls, side panels, animation loop. |
 
 To add a scenario, push another object onto `CPUViz.scenarios` (see
-`false-sharing.js`) and include its script in `index.html`. Ops are
-`{ kind: 'read' | 'write' | 'rmw', addr, desc }`.
+`false-sharing.js`, `aos-soa.js`) and include its script in `index.html`. Ops are
+`{ kind: 'read' | 'write' | 'rmw', addr, desc }`; returning `null` from
+`nextOp` ends that thread, and a scenario with `metric: 'completion'` is scored
+on time-to-finish instead of throughput. `slotStyle(line, slot)` controls how
+each 8-byte slot is labelled and coloured.

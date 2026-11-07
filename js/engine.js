@@ -58,7 +58,7 @@
 
       // (line:slot) -> owning cpu, so the view can colour each 8-byte slot
       this.owners = new Map();
-      for (let i = 0; i < numCpus; i++) {
+      for (let i = 0; variant.addrFor && i < numCpus; i++) {
         const a = variant.addrFor(i);
         this.owners.set(lineOf(a) + ':' + slotOf(a), i);
       }
@@ -66,7 +66,9 @@
       this.cpus = Array.from({ length: numCpus }, (_, id) => ({
         id,
         line: null,       // { addr, state: 'M'|'E'|'S'|'I', data: number[], pendingInv }
-        status: 'idle',   // 'idle' | 'exec' | 'stall'
+        status: 'idle',   // 'idle' | 'exec' | 'stall' | 'done'
+        op: null,         // current/last operation
+        doneAt: null,
         ops: 0,
         iter: 0,
         execNs: 0,
@@ -83,7 +85,8 @@
       this.log = [];
       this.logSeq = 0;
       this.narration = { t: 0, text: variant.intro, cpu: null, seq: 0 };
-      this.stats = { hits: 0, misses: 0, invalidations: 0, fetches: 0, writebacks: 0 };
+      this.stats = { hits: 0, misses: 0, invalidations: 0, fetches: 0, writebacks: 0, bytesFetched: 0, bytesUsed: 0 };
+      this.doneAt = null; // set when every core has finished a finite workload
       this.steadyNarrated = false;
 
       for (const c of this.cpus) this.at(0, () => this.cpuNext(c));
@@ -129,13 +132,15 @@
           return true;
         }
       }
-      if (target > this.time) this.time = target;
+      // A finite workload that has completed freezes the clock at its end.
+      if (target > this.time && this.queue.length) this.time = target;
       this.pruneAnims();
       return false;
     }
 
     pruneAnims() {
-      if (this.anims.length) this.anims = this.anims.filter((a) => a.end >= this.time);
+      const keep = this.finished ? (a) => a.end > this.time : (a) => a.end >= this.time;
+      if (this.anims.length) this.anims = this.anims.filter(keep);
     }
 
     /** Called from a hook to stop advanceTo() after the current event. */
@@ -197,8 +202,17 @@
       return l;
     }
 
+    get finished() {
+      return this.doneAt != null;
+    }
+
     cpuNext(cpu) {
       const op = this.variant.nextOp(cpu.id, cpu.iter);
+      if (!op) {
+        this.cpuDone(cpu);
+        return;
+      }
+      cpu.op = op;
       const line = lineOf(op.addr);
       const c = cpu.line;
       const isWrite = op.kind !== 'read';
@@ -209,6 +223,18 @@
         (isWrite ? c.state === 'M' || c.state === 'E' : c.state !== 'I');
       if (ok) this.hit(cpu, op, null, false);
       else this.miss(cpu, op, line);
+    }
+
+    cpuDone(cpu) {
+      cpu.status = 'done';
+      cpu.doneAt = this.time;
+      cpu.waiting = null;
+      this.emit('cpu-done', { cpu: cpu.id });
+      if (this.cpus.every((c) => c.status === 'done')) {
+        this.doneAt = this.time;
+        this.narrate(this.variant.doneText ? this.variant.doneText(this) : `All cores finished in ${fmtNs(this.time)}.`, null);
+        this.emit('all-done', {});
+      }
     }
 
     hit(cpu, op, onDone, afterMiss) {
@@ -224,7 +250,7 @@
 
       if (!afterMiss && !this.steadyNarrated) {
         this.steadyNarrated = true;
-        this.narrate(this.variant.steadyText(cpu.id, L), null);
+        this.narrate(this.variant.steadyText(cpu.id, L, op), this.variant.steadyCpu ? cpu.id : null);
       }
 
       this.at(t1, () => {
@@ -235,6 +261,7 @@
         }
         cpu.ops++;
         cpu.iter++;
+        this.stats.bytesUsed += WORD_BYTES;
         cpu.execNs += t1 - t0;
         cpu.execSince = null;
         cpu.status = 'idle';
@@ -256,14 +283,17 @@
       const lock = this.lockFor(line);
       const c = cpu.line;
       let why;
-      if (!c || c.addr !== line) {
+      if (!c) {
         why = `cold miss: line ${hex(line)} is not in its cache yet.`;
+      } else if (c.addr !== line) {
+        why = `line ${hex(line)} is not in its cache. Its one cache line holds ${hex(c.addr)}, which gets replaced.`;
       } else if (c.state === 'I' || c.pendingInv) {
         why = `its copy of line ${hex(line)} was invalidated because another core wrote to the same line. It stalls.`;
       } else {
         why = `it holds line ${hex(line)} as Shared, but writing needs exclusive ownership.`;
       }
-      this.narrate(`Core ${cpu.id} wants ${op.desc}, but ${why}`, cpu.id, {
+      const want = op.kind === 'read' ? `to read ${op.desc}` : op.desc;
+      this.narrate(`Core ${cpu.id} wants ${want}, but ${why}`, cpu.id, {
         log: `Core ${cpu.id} misses on ${hex(line)} (${op.desc})`,
       });
 
@@ -417,6 +447,7 @@
       this.at(t1, () => {
         cpu.line = { addr: line, state: shared ? 'S' : 'E', data, pendingInv: false };
         this.stats.fetches++;
+        this.stats.bytesFetched += LINE_BYTES;
         this.emit('phase-end', { phase: 'fetch', cpu: cpu.id, line });
         next();
       });
@@ -429,7 +460,9 @@
       cpu.stallSince = null;
       cpu.waiting = null;
       this.narrate(
-        `Core ${cpu.id} finally owns line ${hex(line)} and performs ${op.desc} in ${this.lat.l1} ns, after stalling for ${fmtNs(stalled)}.`,
+        op.kind === 'read'
+          ? `Core ${cpu.id} now has line ${hex(line)} and reads ${op.desc} in ${this.lat.l1} ns, after stalling for ${fmtNs(stalled)}.`
+          : `Core ${cpu.id} finally owns line ${hex(line)} and performs ${op.desc} in ${this.lat.l1} ns, after stalling for ${fmtNs(stalled)}.`,
         cpu.id,
         { log: `Core ${cpu.id} ${op.desc} done (stalled ${fmtNs(stalled)})` }
       );

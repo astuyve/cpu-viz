@@ -181,8 +181,8 @@ details[open].card summary { margin-bottom: 10px; }
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.seg-tag.packed { background: rgba(229, 72, 77, 0.14); color: var(--bad); }
-.seg-tag.padded { background: rgba(34, 160, 107, 0.14); color: var(--ok); }
+.seg-tag.bad { background: rgba(229, 72, 77, 0.14); color: var(--bad); }
+.seg-tag.good { background: rgba(34, 160, 107, 0.14); color: var(--ok); }
 
 .transport { display: flex; gap: 6px; flex-wrap: wrap; }
 .btn {
@@ -273,7 +273,10 @@ details[open].card summary { margin-bottom: 10px; }
 #viz .pill { fill: var(--muted); }
 #viz .pill.exec { fill: var(--ok); }
 #viz .pill.stall { fill: var(--bad); }
-#viz .slot { fill: var(--slot-empty); stroke: none; }
+#viz .pill.done { fill: var(--accent); }
+#viz .t-strong { font-weight: 700; font-family: var(--mono); }
+#viz .slot { stroke: none; }
+#viz .slot:not(.owned) { fill: var(--slot-empty); }
 #viz .slot.owned { stroke: none; }
 #viz .slot.mine { stroke: var(--ink); stroke-width: 2; }
 #viz .strike { stroke: var(--muted); stroke-width: 2; }
@@ -310,12 +313,12 @@ details[open].card summary { margin-bottom: 10px; }
 
 /* ---------- compare / stats ---------- */
 .cmp-row { margin-bottom: 12px; }
+.cmp-head .muted { font-weight: 500; }
 .cmp-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; font-size: 13px; }
-.cmp-row.current .cmp-head span:first-child::after { content: ' (running)'; color: var(--muted); font-weight: 500; }
 .cmp-track { height: 10px; background: var(--slot-empty); border-radius: 5px; margin: 5px 0 3px; overflow: hidden; }
 .cmp-bar { height: 100%; border-radius: 5px; transition: width 0.2s; }
-.cmp-bar.packed { background: var(--bad); }
-.cmp-bar.padded { background: var(--ok); }
+.cmp-bar.bad { background: var(--bad); }
+.cmp-bar.good { background: var(--ok); }
 .cmp-sub { font-size: 11.5px; color: var(--muted); }
 .cmp-ratio { margin: 4px 0 12px; font-size: 13.5px; }
 .stats {
