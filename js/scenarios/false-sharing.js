@@ -177,7 +177,7 @@
           '// Each counter owns a whole',
           '// 64-byte cache line.',
           'struct counter {',
-          '    _Alignas(64) int64_t value;',
+          '    alignas(64) int64_t value;',
           '    char pad[64 - sizeof(int64_t)];',
           '};',
           'struct counter counters[4];',

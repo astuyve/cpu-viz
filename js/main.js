@@ -124,7 +124,7 @@
   }
 
   // ---- code panel with a tiny C highlighter ----
-  const KW = /\b(struct|int64_t|char|void|for|int|_Alignas|sizeof|return)\b/g;
+  const KW = /\b(struct|int64_t|char|void|for|int|alignas|sizeof|return)\b/g;
   function esc(s) {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
