@@ -15,9 +15,8 @@ Deep-link params: `?scenario=aos-soa&particles=32&variant=padded&speed=5&t=250&p
 
 ## Guided tour
 
-On page load the tour auto-starts on a first visit (remembered in
-`localStorage`); selecting a scenario tab always starts that scenario's tour. It
-can be restarted with the **Guided tour** button. Each step spotlights parts of the
+The tour starts on every plain page load (on False sharing) and whenever a
+scenario tab is selected. It can be restarted with the **Guided tour** button. Each step spotlights parts of the
 diagram, plays the simulation at its own slowed-down speed, and pauses on a
 hardware event emitted by the engine (`miss`, `phase-start`, `phase-end`,
 `op-done`). Because the simulation is deterministic, Back/Replay just rebuild

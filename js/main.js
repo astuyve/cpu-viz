@@ -19,7 +19,6 @@
     lastNarr: -1,
   };
   const view = new NS.View($('viz'));
-  const TOUR_KEY = 'cpuviz.tourSeen.';
 
   const tour = new NS.Tour(
     {
@@ -39,12 +38,7 @@
       setPlaying: (p) => setPlaying(p),
       view,
       lat,
-      onEnd(action, def) {
-        try {
-          localStorage.setItem(TOUR_KEY + state.scenario.id, '1');
-        } catch (e) {
-          /* storage unavailable */
-        }
+      onEnd(action) {
         if (action === 'fix') {
           state.variantIdx = state.scenario.variants.length - 1;
           renderVariants();
@@ -61,13 +55,6 @@
   function advance(target) {
     const broke = state.sim.advanceTo(target);
     if (broke && tour.active) tour.onBreak();
-  }
-  function tourSeen(sc) {
-    try {
-      return localStorage.getItem(TOUR_KEY + sc.id) === '1';
-    } catch (e) {
-      return false;
-    }
   }
   function startTour() {
     if (state.scenario.tour) tour.start(state.scenario.tour);
@@ -482,14 +469,14 @@
   if (t0 > 0) state.sim.advanceTo(t0);
   setPlaying(q.get('paused') !== '1');
 
-  // Guided tour: auto-start on a first visit (or with ?tour=1 / ?tour=<step>).
-  const seen = tourSeen(state.scenario);
+  // Guided tour: always starts on a plain page load. Deep links that set the
+  // view (?t=, ?variant=, ...) skip it; ?tour=<step> opens it at a given step.
   const tq = q.get('tour');
   if (tq != null && tq !== '0') {
     startTour();
     const n = parseInt(tq, 10);
     if (n > 1 && tour.active) tour.goto(Math.min(n, state.scenario.tour.steps.length) - 1);
-  } else if (state.scenario.tour && !seen && !q.toString()) {
+  } else if (state.scenario.tour && !q.toString()) {
     startTour();
   }
   requestAnimationFrame(frame);
