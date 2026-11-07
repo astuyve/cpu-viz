@@ -111,17 +111,46 @@
       return this.queue.length ? this.queue[0].t : Infinity;
     }
 
-    /** Process every event up to and including `target` ns. */
+    /**
+     * Process every event up to and including `target` ns.
+     * Returns true if a hook requested a break (see `hook` / `requestBreak`),
+     * in which case time stops at the event that triggered it.
+     */
     advanceTo(target) {
       let guard = 0;
       while (this.queue.length && this.queue[0].t <= target && guard++ < 1e6) {
         const ev = this.queue.shift();
         this.time = ev.t;
         ev.fn();
+        if (this.breakFlag) {
+          this.breakFlag = false;
+          this.pruneAnims();
+          return true;
+        }
       }
       if (target > this.time) this.time = target;
-      // drop finished animations
+      this.pruneAnims();
+      return false;
+    }
+
+    pruneAnims() {
       if (this.anims.length) this.anims = this.anims.filter((a) => a.end >= this.time);
+    }
+
+    /** Called from a hook to stop advanceTo() after the current event. */
+    requestBreak() {
+      this.breakFlag = true;
+    }
+
+    /**
+     * Notify an optional observer of a hardware event. Types:
+     *   miss        { cpu, line }
+     *   phase-start { phase, cpu, line, from? }   cpu = the requesting core
+     *   phase-end   { phase, cpu, line }
+     *   op-done     { cpu, ops }
+     */
+    emit(type, data) {
+      if (this.hook) this.hook(Object.assign({ type, t: this.time }, data), this);
     }
 
     /** Advance to the next moment something happens. */
@@ -208,8 +237,13 @@
         cpu.execNs += t1 - t0;
         cpu.execSince = null;
         cpu.status = 'idle';
-        if (onDone) onDone();
-        this.cpuNext(cpu);
+        this.emit('op-done', { cpu: cpu.id, ops: cpu.ops });
+        // Continue in a separate event so a breakpoint on op-done pauses
+        // *before* the next transaction starts.
+        this.at(this.time, () => {
+          if (onDone) onDone();
+          this.cpuNext(cpu);
+        });
       });
     }
 
@@ -233,6 +267,7 @@
       });
 
       cpu.waiting = { phase: 'queued', line, start: this.time, end: null };
+      this.emit('miss', { cpu: cpu.id, line });
       lock.queue.push({ cpu, op, line });
       this.startNextTx(line);
     }
@@ -285,7 +320,9 @@
       cpu.waiting = { phase: 'evict', line: old.addr, start: t0, end: t1 };
       this.anim({ kind: 'wb', from: cpu.id, line: old.addr, data: old.data.slice(), start: t0, end: t1 });
       this.narrate(`Core ${cpu.id} evicts dirty line ${hex(old.addr)} back to DRAM to make room.`, cpu.id);
+      this.emit('phase-start', { phase: 'evict', cpu: cpu.id, line: old.addr });
       this.at(t1, () => {
+        this.emit('phase-end', { phase: 'evict', cpu: cpu.id, line: old.addr });
         this.memory.set(old.addr, old.data.slice());
         this.stats.writebacks++;
         old.state = 'I';
@@ -312,12 +349,15 @@
         cpu.id,
         { log: `Core ${cpu.id} → invalidate ${hex(line)} on ${list}` }
       );
+      const phase = excl ? 'invalidate' : 'snoop';
+      this.emit('phase-start', { phase, cpu: cpu.id, line, to: others.map((o) => o.id) });
       this.at(t1, () => {
         if (dirty) tx.wbData = dirty.line.data.slice();
         for (const o of others) {
           o.line.pendingInv = false;
           o.line.state = excl ? 'I' : 'S';
         }
+        this.emit('phase-end', { phase, cpu: cpu.id, line });
         next();
       });
     }
@@ -334,9 +374,11 @@
         dirty.id,
         { log: `Core ${dirty.id} writes back ${hex(line)} → DRAM` }
       );
+      this.emit('phase-start', { phase: 'writeback', cpu: cpu.id, line, from: dirty.id });
       this.at(t1, () => {
         this.memory.set(line, data.slice());
         this.stats.writebacks++;
+        this.emit('phase-end', { phase: 'writeback', cpu: cpu.id, line, from: dirty.id });
         next();
       });
     }
@@ -354,9 +396,11 @@
         cpu.id,
         { log: `Core ${cpu.id} fetches ${hex(line)} ← DRAM` }
       );
+      this.emit('phase-start', { phase: 'fetch', cpu: cpu.id, line });
       this.at(t1, () => {
         cpu.line = { addr: line, state: shared ? 'S' : 'E', data, pendingInv: false };
         this.stats.fetches++;
+        this.emit('phase-end', { phase: 'fetch', cpu: cpu.id, line });
         next();
       });
     }

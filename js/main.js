@@ -19,6 +19,50 @@
     lastNarr: -1,
   };
   const view = new NS.View($('viz'));
+  const TOUR_KEY = 'cpuviz.tourSeen.';
+
+  const tour = new NS.Tour(
+    {
+      sim: () => state.sim,
+      resetSim(variantId) {
+        const i = state.scenario.variants.findIndex((v) => v.id === variantId);
+        if (i >= 0 && i !== state.variantIdx) {
+          state.variantIdx = i;
+          renderVariants();
+        }
+        reset();
+      },
+      getSpeed: () => state.msPerNs,
+      setSpeed,
+      isPlaying: () => state.playing,
+      setPlaying: (p) => setPlaying(p),
+      view,
+      lat,
+      onEnd(action, def) {
+        try {
+          localStorage.setItem(TOUR_KEY + state.scenario.id, '1');
+        } catch (e) {
+          /* storage unavailable */
+        }
+        if (action === 'fix') {
+          state.variantIdx = state.scenario.variants.length - 1;
+          renderVariants();
+          reset();
+        }
+        setPlaying(true);
+      },
+    },
+    $('tour')
+  );
+
+  /** Advance the simulation, handing tour breakpoints to the tour. */
+  function advance(target) {
+    const broke = state.sim.advanceTo(target);
+    if (broke && tour.active) tour.onBreak();
+  }
+  function startTour() {
+    if (state.scenario.tour) tour.start(state.scenario.tour);
+  }
 
   // ---- speed: slider 0..100 maps logarithmically to 0.2..200 ms per ns ----
   const S_MIN = 0.2;
@@ -49,6 +93,7 @@
       b.className = 'tab' + (sc === state.scenario ? ' active' : '');
       b.textContent = sc.title;
       b.onclick = () => {
+        tour.end('close');
         state.scenario = sc;
         state.variantIdx = 0;
         state.results = {};
@@ -69,6 +114,7 @@
       b.className = 'seg-btn' + (i === state.variantIdx ? ' active' : '');
       b.innerHTML = `${v.label} <span class="seg-tag ${v.id}">${v.tag}</span>`;
       b.onclick = () => {
+        tour.end('close');
         state.variantIdx = i;
         renderVariants();
         reset();
@@ -229,24 +275,39 @@
     $('playBtn').setAttribute('aria-pressed', String(p));
   }
   $('playBtn').onclick = () => setPlaying(!state.playing);
-  $('stepBtn').onclick = () => {
+  function stepOnce() {
     setPlaying(false);
-    state.sim.step();
+    const t = state.sim.nextEventTime();
+    if (t !== Infinity) advance(t);
+  }
+  function setSpeed(ms) {
+    state.msPerNs = ms;
+    $('speed').value = speedToSlider(ms);
+    renderSpeed();
+  }
+  $('stepBtn').onclick = stepOnce;
+  $('ffBtn').onclick = () => advance(state.sim.time + 1000);
+  $('resetBtn').onclick = () => {
+    tour.end('close');
+    reset();
   };
-  $('ffBtn').onclick = () => state.sim.advanceTo(state.sim.time + 1000);
-  $('resetBtn').onclick = () => reset();
+  $('tourBtn').onclick = startTour;
   $('speed').addEventListener('input', (e) => {
     state.msPerNs = sliderToSpeed(parseFloat(e.target.value));
     renderSpeed();
   });
+  window.addEventListener('resize', () => tour.active && tour.layout());
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT') return;
     if (e.code === 'Space') {
       e.preventDefault();
       setPlaying(!state.playing);
+    } else if (tour.active) {
+      if (e.code === 'ArrowRight') tour.next();
+      else if (e.code === 'ArrowLeft') tour.back();
+      else if (e.code === 'Escape') tour.end('close');
     } else if (e.code === 'ArrowRight') {
-      setPlaying(false);
-      state.sim.step();
+      stepOnce();
     } else if (e.key === 'r') {
       reset();
     }
@@ -257,8 +318,9 @@
   function frame(now) {
     const dt = Math.min(now - last, 100);
     last = now;
-    if (state.playing) state.sim.advanceTo(state.sim.time + dt / state.msPerNs);
+    if (state.playing) advance(state.sim.time + dt / state.msPerNs);
     view.render(state.sim, now);
+    tour.tick();
     $('clock').textContent = fmtClock(state.sim.time);
     if (now - state.lastPanel > 90) {
       state.lastPanel = now;
@@ -283,8 +345,24 @@
   const t0 = parseFloat(q.get('t'));
   if (t0 > 0) state.sim.advanceTo(t0);
   setPlaying(q.get('paused') !== '1');
+
+  // Guided tour: auto-start on a first visit (or with ?tour=1 / ?tour=<step>).
+  let seen = false;
+  try {
+    seen = localStorage.getItem(TOUR_KEY + state.scenario.id) === '1';
+  } catch (e) {
+    /* storage unavailable */
+  }
+  const tq = q.get('tour');
+  if (tq != null && tq !== '0') {
+    startTour();
+    const n = parseInt(tq, 10);
+    if (n > 1 && tour.active) tour.goto(Math.min(n, state.scenario.tour.steps.length) - 1);
+  } else if (!seen && !q.toString()) {
+    startTour();
+  }
   requestAnimationFrame(frame);
 
   // expose for debugging in the console
-  NS.app = { state, reset, hex };
+  NS.app = { state, reset, hex, tour };
 })((window.CPUViz = window.CPUViz || {}));

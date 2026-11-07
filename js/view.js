@@ -118,7 +118,9 @@
 
       const gWires = el('g', { class: 'wires' }, svg);
       const gStatic = el('g', {}, svg);
+      this.gFocus = el('g', { class: 'focus' }, svg);
       this.gPackets = el('g', { class: 'packets' }, svg);
+      this.focusKey = null;
 
       // ---- interconnect ----
       el('rect', { x: 40, y: G.busY, width: G.W - 80, height: G.busH, rx: 18, class: 'bus' }, gStatic);
@@ -208,6 +210,52 @@
         this.rows.push(row);
       });
       txt(gm, G.mSlotX0, G.memY + G.memH - 14, 'Byte offset within each line: 0 · 8 · 16 · 24 · 32 · 40 · 48 · 56', 't-tiny muted');
+    }
+
+    // ---- spotlight (used by the guided tour) ----
+
+    /** Named diagram regions in viewBox units. */
+    region(name) {
+      const [kind, arg] = name.split(':');
+      const pad = 8;
+      if (kind === 'cpu') {
+        const x = coreX(+arg) - G.coreW / 2;
+        return { x: x - pad, y: G.coreY - pad, w: G.coreW + pad * 2, h: G.cacheY + G.cacheH - G.coreY + pad * 2 };
+      }
+      if (kind === 'core') {
+        const x = coreX(+arg) - G.coreW / 2;
+        return { x: x - pad, y: G.coreY - pad, w: G.coreW + pad * 2, h: G.coreH + pad * 2 };
+      }
+      if (kind === 'cache') {
+        const x = coreX(+arg) - G.coreW / 2;
+        return { x: x - pad, y: G.cacheY - pad, w: G.coreW + pad * 2, h: G.cacheH + pad * 2 };
+      }
+      if (kind === 'bus') return { x: 40 - pad, y: G.busY - pad, w: G.W - 80 + pad * 2, h: G.busH + pad * 2 };
+      if (kind === 'memory') return { x: G.memX - pad, y: G.memY - pad, w: G.memW + pad * 2, h: G.memH + pad * 2 };
+      if (kind === 'row') {
+        const row = this.rows.find((r) => r.line === parseInt(arg, 16));
+        if (!row) return null;
+        return { x: G.mSlotX0 - 120, y: row.y - 14, w: memRowW + 120 + 230, h: G.rowH + 28 };
+      }
+      return null;
+    }
+
+    /** Dim everything except the named regions. Pass null to clear. */
+    setFocus(names) {
+      const key = names ? names.join(',') : '';
+      if (key === this.focusKey) return;
+      this.focusKey = key;
+      const g = this.gFocus;
+      while (g.firstChild) g.removeChild(g.firstChild);
+      if (!names || !names.length) return;
+      const rects = names.map((n) => this.region(n)).filter(Boolean);
+      const id = 'focus-mask-' + Math.random().toString(36).slice(2, 8);
+      const defs = el('defs', {}, g);
+      const mask = el('mask', { id }, defs);
+      el('rect', { x: 0, y: 0, width: G.W, height: G.H, fill: '#fff' }, mask);
+      for (const r of rects) el('rect', { x: r.x, y: r.y, width: r.w, height: r.h, rx: 16, fill: '#000' }, mask);
+      el('rect', { x: 0, y: 0, width: G.W, height: G.H, class: 'focus-dim', mask: `url(#${id})` }, g);
+      for (const r of rects) el('rect', { x: r.x, y: r.y, width: r.w, height: r.h, rx: 16, class: 'focus-ring' }, g);
     }
 
     // ---- per frame ----

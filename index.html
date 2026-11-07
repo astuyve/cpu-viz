@@ -24,6 +24,7 @@
       <div class="toolbar">
         <div class="seg" id="variantSeg" role="group" aria-label="Memory layout"></div>
         <div class="transport">
+          <button id="tourBtn" class="btn" title="Walk through the first few hardware events step by step">Guided tour</button>
           <button id="playBtn" class="btn primary" aria-pressed="true">Pause</button>
           <button id="stepBtn" class="btn" title="Advance to the next hardware event (→)">Step</button>
           <button id="ffBtn" class="btn" title="Simulate 1 µs instantly">+1 µs</button>
@@ -41,8 +42,11 @@
           <span id="speedSub" class="sub"></span>
         </div>
       </div>
-      <div class="svgwrap">
-        <svg id="viz" role="img" aria-label="Four CPU cores, each with a one-line L1 cache, connected by an interconnect to main memory"></svg>
+      <div class="canvas">
+        <div class="svgwrap">
+          <svg id="viz" role="img" aria-label="Four CPU cores, each with a one-line L1 cache, connected by an interconnect to main memory"></svg>
+        </div>
+        <div class="tour" id="tour" hidden></div>
       </div>
       <div class="narration" id="narration" aria-live="polite"></div>
     </section>
@@ -87,13 +91,14 @@
           <li>lets a core do one increment each time it owns the line. Real cores often fit several in, so measured false-sharing slowdowns are usually 2–20× rather than hundreds, and are worse across sockets.</li>
         </ul>
       </details>
-      <p class="kbd-hint">Keys: <kbd>Space</kbd> play/pause · <kbd>→</kbd> step · <kbd>R</kbd> reset</p>
+      <p class="kbd-hint">Keys: <kbd>Space</kbd> play/pause · <kbd>→</kbd> step · <kbd>R</kbd> reset · in the tour, <kbd>←</kbd> <kbd>→</kbd> and <kbd>Esc</kbd></p>
     </aside>
   </main>
 
   <script src="js/engine.js"></script>
   <script src="js/scenarios/false-sharing.js"></script>
   <script src="js/view.js"></script>
+  <script src="js/tour.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>

@@ -1,0 +1,212 @@
+/*
+ * CPU Viz — guided tour.
+ *
+ * A tour is a list of steps defined by the scenario. Each step can:
+ *   - spotlight diagram regions          focus: ['cpu:0', 'row:0x1000', 'bus', ...]
+ *   - play the simulation at its own speed   speed: ms of screen time per ns
+ *   - run until a hardware event, then pause until: (event, sim) => boolean
+ *
+ * The simulation is deterministic, so Back/Replay simply rebuild a fresh
+ * simulation and fast-forward through the earlier steps' breakpoints.
+ */
+(function (NS) {
+  'use strict';
+
+  class Tour {
+    /**
+     * @param {object} app  { sim(), resetSim(variantId), setSpeed(ms), getSpeed(),
+     *                        setPlaying(bool), isPlaying(), view, lat, onEnd(action) }
+     * @param {HTMLElement} root  container for the card
+     */
+    constructor(app, root) {
+      this.app = app;
+      this.root = root;
+      this.active = false;
+      this.def = null;
+      this.i = 0;
+      this.done = false;
+    }
+
+    start(def) {
+      this.def = def;
+      this.active = true;
+      this.prevSpeed = this.app.getSpeed();
+      this.root.hidden = false;
+      document.body.classList.add('touring');
+      this.goto(0);
+    }
+
+    end(action) {
+      if (!this.active) return;
+      this.active = false;
+      const sim = this.app.sim();
+      if (sim) sim.hook = null;
+      this.app.view.setFocus(null);
+      this.clearLayout();
+      this.root.hidden = true;
+      this.root.innerHTML = '';
+      document.body.classList.remove('touring');
+      this.app.setSpeed(this.prevSpeed);
+      this.app.onEnd(action || 'close', this.def);
+    }
+
+    get steps() {
+      return this.def.steps;
+    }
+
+    /** Rebuild the simulation at the start of step i, then enter it. */
+    goto(i) {
+      this.app.resetSim(this.def.variant);
+      const sim = this.app.sim();
+      for (let k = 0; k < i; k++) this.runInstant(sim, this.steps[k]);
+      this.enter(i);
+    }
+
+    runInstant(sim, step) {
+      if (!step.until) return;
+      this.arm(sim, step);
+      for (let n = 0; n < 100; n++) {
+        if (sim.advanceTo(sim.time + 10000)) return;
+      }
+    }
+
+    arm(sim, step) {
+      sim.hook = step.until
+        ? (e, s) => {
+            if (step.until(e, s)) s.requestBreak();
+          }
+        : null;
+    }
+
+    enter(i) {
+      this.i = i;
+      const step = this.steps[i];
+      const sim = this.app.sim();
+      this.arm(sim, step);
+      this.app.view.setFocus(step.focus || null);
+      this.app.setSpeed(step.speed || this.prevSpeed);
+      this.done = !step.until;
+      this.app.setPlaying(!this.done);
+      this.render();
+    }
+
+    /** Called by the app when the simulation hit this step's breakpoint. */
+    onBreak() {
+      this.done = true;
+      this.app.setPlaying(false);
+      this.renderStatus();
+    }
+
+    next() {
+      if (!this.done) {
+        // skip the rest of this step's animation
+        this.runInstant(this.app.sim(), this.steps[this.i]);
+        this.done = true;
+      }
+      if (this.i >= this.steps.length - 1) this.end('finish');
+      else this.enter(this.i + 1);
+    }
+
+    back() {
+      if (this.i > 0) this.goto(this.i - 1);
+    }
+
+    replay() {
+      this.goto(this.i);
+    }
+
+    // ---- UI ----
+
+    render() {
+      const step = this.steps[this.i];
+      const n = this.steps.length;
+      const lat = this.app.lat;
+      const body = typeof step.body === 'function' ? step.body(lat, this.app.getSpeed()) : step.body;
+      const actions = step.final
+        ? `<button class="btn" data-a="close">Keep watching</button>
+           <button class="btn primary" data-a="fix">${step.finalLabel || 'Show the fix'} →</button>`
+        : `<button class="btn" data-a="back" ${this.i === 0 ? 'disabled' : ''}>Back</button>
+           ${step.until ? '<button class="btn" data-a="replay" title="Replay this step">Replay</button>' : ''}
+           <button class="btn primary" data-a="next">${this.i === 0 ? 'Start' : 'Next'} →</button>`;
+      const dots = this.steps
+        .map((_, k) => `<span class="tdot${k === this.i ? ' on' : k < this.i ? ' past' : ''}"></span>`)
+        .join('');
+
+      this.root.innerHTML = `
+        <div class="tour-card" role="dialog" aria-labelledby="tourTitle">
+          <div class="tour-head">
+            <span class="tour-count">Guided tour · ${this.i + 1} / ${n}</span>
+            <span class="tour-dots" aria-hidden="true">${dots}</span>
+            <button class="tour-skip" data-a="close">Skip tour</button>
+          </div>
+          <h3 id="tourTitle">${step.title}</h3>
+          <div class="tour-body">${body}</div>
+          <div class="tour-foot">
+            <span class="tour-status" id="tourStatus"></span>
+            <span class="tour-actions">${actions}</span>
+          </div>
+        </div>`;
+      this.root.querySelectorAll('[data-a]').forEach((b) => {
+        b.addEventListener('click', () => this.action(b.dataset.a));
+      });
+      this.renderStatus();
+      this.layout();
+    }
+
+    renderStatus() {
+      const el = this.root.querySelector('#tourStatus');
+      if (!el) return;
+      const step = this.steps[this.i];
+      let html = '';
+      if (!step.until) html = '';
+      else if (this.done) html = '<span class="ok">✓</span> Step complete';
+      else if (this.app.isPlaying()) html = `<span class="live"></span> Playing at 1 ns = ${fmtMs(this.app.getSpeed())}`;
+      else html = 'Paused · press Space to resume';
+      if (el.innerHTML !== html) el.innerHTML = html;
+    }
+
+    /** Called every frame while active. */
+    tick() {
+      if (this.active) this.renderStatus();
+    }
+
+    action(a) {
+      if (a === 'next') this.next();
+      else if (a === 'back') this.back();
+      else if (a === 'replay') this.replay();
+      else if (a === 'close') this.end('close');
+      else if (a === 'fix') this.end('fix');
+    }
+
+    /**
+     * Float the card over the empty lower part of the diagram, and pad the
+     * stage so the card never covers the content below it.
+     */
+    layout() {
+      const host = this.root.parentElement;
+      const svg = host.querySelector('svg');
+      const card = this.root.firstElementChild;
+      if (!svg || !card) return;
+      if (window.matchMedia('(max-width: 760px)').matches) {
+        this.root.style.top = '';
+        host.style.paddingBottom = '';
+        return;
+      }
+      const h = svg.getBoundingClientRect().height;
+      const top = h * (this.def.cardTop || 0.715);
+      this.root.style.top = top + 'px';
+      host.style.paddingBottom = Math.max(0, top + card.offsetHeight - h + 12) + 'px';
+    }
+
+    clearLayout() {
+      const host = this.root.parentElement;
+      if (host) host.style.paddingBottom = '';
+    }
+  }
+
+  function fmtMs(ms) {
+    return ms >= 1000 ? (ms / 1000).toFixed(1) + ' s' : (ms >= 10 ? Math.round(ms) : ms.toFixed(1)) + ' ms';
+  }
+
+  NS.Tour = Tour;
+})((window.CPUViz = window.CPUViz || {}));
