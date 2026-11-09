@@ -18,7 +18,21 @@
     lastPanel: 0,
     lastNarr: -1,
   };
-  const view = new NS.View($('viz'));
+  // Each scenario may bring its own simulator and renderer (the SIMD tab
+  // draws registers and instructions instead of caches and memory).
+  const views = new Map();
+  function viewFor(sc) {
+    const V = sc.View || NS.View;
+    if (!views.has(V)) views.set(V, new V($('viz')));
+    return views.get(V);
+  }
+  let view = viewFor(state.scenario);
+  function makeSim(v) {
+    const S = state.scenario.Sim || NS.Sim;
+    const sim = new S({ numCpus: 4, variant: v, lat });
+    sim.paramValue = paramValue();
+    return sim;
+  }
 
   const tour = new NS.Tour(
     {
@@ -36,7 +50,12 @@
       setSpeed,
       isPlaying: () => state.playing,
       setPlaying: (p) => setPlaying(p),
-      view,
+      get view() {
+        return view;
+      },
+      get timeUnit() {
+        return state.scenario.timeUnit || 'ns';
+      },
       lat,
       onEnd(action) {
         if (action === 'fix') {
@@ -44,7 +63,7 @@
           renderVariants();
           reset();
         }
-        if (state.scenario.param) setSpeed(defaultSpeed(state.scenario));
+        if (state.scenario.param || state.scenario.speed) setSpeed(defaultSpeed(state.scenario));
         setPlaying(true);
       },
     },
@@ -76,7 +95,8 @@
   }
   const resKey = (variantId, pv) => `${variantId}:${pv == null ? '' : pv}`;
   function defaultSpeed(sc) {
-    return sc.param && sc.param.speeds ? sc.param.speeds[sc.param.value] : 15;
+    if (sc.param && sc.param.speeds) return sc.param.speeds[sc.param.value];
+    return sc.speed || 15;
   }
 
   /** Save a run's result for the comparison panel (called every panel refresh and before a reset). */
@@ -95,16 +115,15 @@
   function precompute(variantId) {
     const v = state.scenario.variants.find((x) => x.id === variantId);
     if (!v) return;
-    const sim = new NS.Sim({ numCpus: 4, variant: v, lat });
-    sim.paramValue = paramValue();
+    const sim = makeSim(v);
     for (let n = 0; n < 10000 && !sim.finished; n++) sim.advanceTo(sim.time + 1e6);
     recordResult(sim);
   }
 
   function reset() {
     if (state.sim) recordResult(state.sim);
-    state.sim = new NS.Sim({ numCpus: 4, variant: variant(), lat });
-    state.sim.paramValue = paramValue();
+    view = viewFor(state.scenario);
+    state.sim = makeSim(variant());
     view.build(state.sim);
     state.lastLogSeq = -1;
     state.lastNarr = -1;
@@ -126,16 +145,30 @@
         state.scenario = sc;
         state.variantIdx = 0;
         state.results = {};
-        setSpeed(defaultSpeed(sc));
         renderScenarioTabs();
+        setSpeed(defaultSpeed(sc));
         renderVariants();
         reset();
         if (sc.tour) startTour(); // selecting a scenario always opens its tour
       };
       nav.appendChild(b);
     });
-    $('scenarioSummary').textContent = state.scenario.summary;
-    $('tourBtn').hidden = !state.scenario.tour;
+    renderScenarioChrome();
+  }
+
+  /** Labels and cards that depend on the scenario. */
+  const defaultLegend = $('legendBody').innerHTML;
+  function renderScenarioChrome() {
+    const sc = state.scenario;
+    $('scenarioSummary').textContent = sc.summary;
+    $('tourBtn').hidden = !sc.tour;
+    $('legendBody').innerHTML = sc.legendHtml || defaultLegend;
+    $('latCard').hidden = !!sc.noLatencies;
+    $('clockLabel').textContent = sc.clockLabel || 'Simulated time';
+    $('viz').setAttribute('aria-label', sc.ariaLabel || 'Four CPU cores, each with a one-line L1 cache, connected by an interconnect to main memory');
+    const ff = sc.ff || { label: '+1 µs', title: 'Simulate 1 µs instantly' };
+    $('ffBtn').textContent = ff.label;
+    $('ffBtn').title = ff.title;
   }
 
   function renderParam() {
@@ -183,7 +216,7 @@
   }
 
   // ---- code panel with a tiny C highlighter ----
-  const KW = /\b(struct|int64_t|char|void|for|int|double|alignas|sizeof|return)\b/g;
+  const KW = /\b(struct|int64_t|char|void|for|int|double|alignas|sizeof|return|fn|let|mut|unsafe|usize|u8|u32|bool|as|loop|if|self|impl)\b/g;
   function esc(s) {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
@@ -268,6 +301,20 @@
 
   /** Finite workloads (AoS vs SoA): time to finish, lower is better. */
   function renderCompletion(sim, v) {
+    const sc = state.scenario;
+    if (sc.statRows) {
+      statRows(sc.statRows(sim));
+      recordResult(sim);
+      renderCompare({
+        value: (r) => fmtClock(r.val),
+        sub: sc.compareSub,
+        pending: sim.finished ? null : `running… ${fmtClock(sim.time)}`,
+        higherIsBetter: false,
+        title: sc.compareTitle || 'Time to finish',
+        tag: sim.finished ? 'this run' : 'running',
+      });
+      return;
+    }
     const s = sim.stats;
     const pct = s.bytesFetched ? Math.round((s.bytesUsed / s.bytesFetched) * 100) : 0;
     statRows([
@@ -328,6 +375,7 @@
     const other = rs[best === 0 ? 1 : 0];
     const ratio = o.higherIsBetter ? rs[best].val / other.val : other.val / rs[best].val;
     const txt = ratio >= 10 ? Math.round(ratio) : ratio.toFixed(1);
+    if (state.scenario.ratioText) return `<p class="cmp-ratio">${state.scenario.ratioText(variants[best].label, txt)}</p>`;
     return `<p class="cmp-ratio"><strong>${variants[best].label}</strong> is <strong>${txt}×</strong> faster in this model.</p>`;
   }
 
@@ -341,11 +389,18 @@
     return n.toFixed(2);
   }
   function fmtClock(ns) {
+    if (state.scenario.fmtTime) return state.scenario.fmtTime(ns);
     if (ns < 10000) return `${ns.toFixed(ns % 1 ? 1 : 0)} ns`;
     return `${(ns / 1000).toFixed(2)} µs`;
   }
   function renderSpeed() {
     const ms = state.msPerNs;
+    if (state.scenario.speedText) {
+      const t = state.scenario.speedText(ms);
+      $('speedLabel').textContent = t.label;
+      $('speedSub').textContent = t.sub;
+      return;
+    }
     const msTxt = ms >= 10 ? Math.round(ms) : ms >= 1 ? ms.toFixed(1) : ms.toFixed(2);
     const factor = ms * 1e6; // 1 ns shown as ms milliseconds
     $('speedLabel').textContent = `1 ns = ${msTxt} ms`;
@@ -405,7 +460,7 @@
     renderSpeed();
   }
   $('stepBtn').onclick = stepOnce;
-  $('ffBtn').onclick = () => advance(state.sim.time + 1000);
+  $('ffBtn').onclick = () => advance(state.sim.time + (state.scenario.ff ? state.scenario.ff.amount : 1000));
   $('resetBtn').onclick = () => {
     tour.end('close');
     reset();

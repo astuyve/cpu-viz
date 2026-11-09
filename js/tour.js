@@ -192,7 +192,7 @@
       let html = '';
       if (!step.until) html = '';
       else if (this.done) html = '<span class="ok">✓</span> Step complete';
-      else if (this.app.isPlaying()) html = `<span class="live"></span> Playing at 1 ns = ${fmtMs(this.app.getSpeed())}`;
+      else if (this.app.isPlaying()) html = `<span class="live"></span> Playing at 1 ${this.app.timeUnit || 'ns'} = ${fmtMs(this.app.getSpeed())}`;
       else html = 'Paused · press Space to resume';
       if (el.innerHTML !== html) el.innerHTML = html;
     }

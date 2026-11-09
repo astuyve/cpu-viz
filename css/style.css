@@ -289,6 +289,50 @@ details[open].card summary { margin-bottom: 10px; }
 #viz .pkt { stroke: var(--panel); stroke-width: 2; }
 #viz .pkt-bg { fill: var(--panel); stroke-width: 2; }
 #viz .dot { stroke: var(--panel); stroke-width: 1.5; }
+
+/* ---------- SIMD view ---------- */
+#viz .sv-cell { fill: var(--slot-empty); }
+#viz .sv-cell.ok { fill: rgba(34, 160, 107, 0.28); }
+#viz .sv-cell.bad { fill: var(--bad); }
+#viz .sv-cell.now { stroke: var(--ink); stroke-width: 1.2; }
+#viz .sv-char { font-family: var(--mono); font-size: 12px; font-weight: 600; }
+#viz .sv-win { fill: none; stroke: var(--accent); stroke-width: 2; }
+#viz .sv-win.loading { stroke-width: 3; }
+#viz .sv-winlab { fill: var(--accent); font-weight: 700; font-family: var(--mono); }
+#viz .sv-found { fill: var(--bad); font-weight: 700; }
+#viz .sv-pc { fill: var(--accent); opacity: 0.16; }
+#viz .sv-asm { font-family: var(--mono); font-size: 11px; }
+#viz .sv-label { font-weight: 700; fill: var(--muted); }
+#viz .sv-cmt { fill: var(--muted); }
+#viz .sv-cnt { fill: var(--accent); font-weight: 700; }
+#viz .sv-reg { font-size: 12.5px; }
+#viz .sv-role { font-family: var(--mono); font-weight: 600; }
+#viz .sv-lane { fill: var(--slot-empty); }
+#viz .sv-lane.live { fill: var(--panel-2); stroke: var(--line); }
+#viz .sv-lane.empty { fill: var(--slot-empty); opacity: 0.6; }
+#viz .sv-lane.hit { fill: var(--bad); }
+#viz .sv-lane.miss { fill: rgba(34, 160, 107, 0.28); }
+#viz .sv-lane.wr { fill: var(--accent); }
+#viz .sv-lane.wr.hit { fill: var(--bad); }
+#viz .sv-hex { font-family: var(--mono); font-size: 10.5px; font-weight: 600; }
+#viz .sv-sub { font-size: 8.5px; fill: var(--muted); font-weight: 500; }
+#viz .sv-bit { font-family: var(--mono); font-size: 10.5px; font-weight: 700; }
+#viz .sv-frame { fill: none; stroke: none; }
+#viz .sv-frame.rd { stroke: #a855f7; stroke-width: 1.5; stroke-dasharray: 4 3; }
+#viz .sv-frame.wr { stroke: var(--accent); stroke-width: 2; }
+#viz .sv-g { fill: var(--slot-empty); opacity: 0.7; }
+#viz .sv-g.in { fill: var(--bad); opacity: 0.85; }
+#viz .sv-gch { font-family: var(--mono); font-size: 9px; fill: var(--muted); }
+#viz .sv-gch.in { fill: #fff; font-weight: 700; }
+#viz .sv-col { fill: none; stroke: #a855f7; stroke-width: 1.5; }
+#viz .sv-gmark { fill: none; stroke-width: 2.5; }
+#viz .sv-gmark.ok { stroke: var(--ok); }
+#viz .sv-gmark.bad { stroke: var(--ink); }
+#viz .sv-link { fill: none; stroke: #a855f7; stroke-width: 1.4; }
+#viz .sv-link.mm { stroke: var(--accent); stroke-dasharray: 2 2; }
+#viz .sv-linkdot { fill: #a855f7; }
+#viz .sv-ribbon { fill: var(--accent); }
+#viz .sv-lane.wr + text, #viz .sv-lane.hit + text { fill: #fff; }
 #viz .focus { pointer-events: none; }
 #viz .focus-dim { fill: var(--bg); opacity: 0.72; animation: fade-in 0.35s ease-out; }
 #viz .focus-ring { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 5; animation: fade-in 0.35s ease-out; }

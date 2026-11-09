@@ -38,6 +38,14 @@ always starts its tour.
   32 particles (408 vs 108 ns, used by the tour walkthrough) or 1,024 (13.1 vs
   3.5 µs, the default, played at 1 ns = 2 ms with a sliding memory window).
   No prefetcher is modeled.
+- **SIMD**: zooms in on one core's registers and instruction stream instead of
+  memory. `Url::parse` percent-encodes the query with `SPECIAL_QUERY`, and the hot
+  loop finds the first byte that needs encoding. The scalar loop takes ~11
+  instructions per byte in 64-bit registers that hold 1 byte; the SSSE3 version
+  from rust-url's `percent_encoding/src/simd.rs` loads 16 bytes into an XMM
+  register and classifies them with two `pshufb` table lookups (the set's
+  nibble-transposed bitmap is drawn as a grid under `xmm5`). On the 56-byte demo
+  query: 569 vs 147 instructions. Time here is measured in instructions, not ns.
 
 ## Layout
 
@@ -46,6 +54,7 @@ always starts its tour.
 | `js/engine.js` | Discrete-event simulator: cores, one-line L1s, simplified MESI, DRAM. Time is in simulated ns. |
 | `js/scenarios/*.js` | Scenario definitions: memory layout, per-thread op stream, code, narration. |
 | `js/view.js` | SVG renderer. Packet positions derive from simulated time, so durations are proportional to latency. |
+| `js/simd-view.js` | SVG renderer for the SIMD scenario: input bytes, instruction listing, GPR and XMM lanes, pshufb lookups. |
 | `js/tour.js` | Guided tour controller: spotlight, per-step speed, breakpoints. |
 | `js/main.js` | Controls, side panels, animation loop. |
 
@@ -55,3 +64,9 @@ To add a scenario, push another object onto `CPUViz.scenarios` (see
 `nextOp` ends that thread, and a scenario with `metric: 'completion'` is scored
 on time-to-finish instead of throughput. `slotStyle(line, slot)` controls how
 each 8-byte slot is labelled and coloured.
+
+A scenario can also bring its own simulator and renderer (`Sim`, `View`), as
+`simd.js` does: the Sim needs the same small interface as `engine.js`
+(`advanceTo`, `nextEventTime`, `hook`/`requestBreak`, `narration`, `log`,
+`finished`/`doneAt`). Optional hooks such as `fmtTime`, `clockLabel`, `speedText`,
+`statRows`, `legendHtml` and `timeUnit` adapt the side panels and labels.

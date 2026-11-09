@@ -36,7 +36,7 @@
       </div>
       <div class="timebar">
         <div class="clock">
-          <span class="label">Simulated time</span>
+          <span class="label" id="clockLabel">Simulated time</span>
           <span id="clock" class="mono big">0 ns</span>
         </div>
         <div class="speed">
@@ -72,7 +72,7 @@
         <ol class="log" id="log"></ol>
       </section>
 
-      <details class="card">
+      <details class="card" id="latCard">
         <summary>Latencies</summary>
         <p class="note">Typical figures for a modern x86 server. Changes take effect on the next transaction.</p>
         <div id="latencies"></div>
@@ -80,6 +80,7 @@
 
       <details class="card">
         <summary>Legend &amp; simplifications</summary>
+        <div id="legendBody">
         <ul class="legend">
           <li><span class="sw" style="background:#f76b15"></span><b>M · Modified</b>: the only copy, and newer than DRAM</li>
           <li><span class="sw" style="background:#0d9488"></span><b>E · Exclusive</b>: the only copy, matches DRAM</li>
@@ -93,6 +94,7 @@
           <li>always re-fetches an invalidated line from DRAM. Real CPUs usually forward a dirty line core-to-core through the shared L3 in about 40–80 ns. That is faster than DRAM, but still 40–80× slower than an L1 hit.</li>
           <li>lets a core do one increment each time it owns the line. Real cores often fit several in, so measured false-sharing slowdowns are usually 2–20× rather than hundreds, and are worse across sockets.</li>
         </ul>
+        </div>
       </details>
       <p class="kbd-hint">Keys: <kbd>Space</kbd> play/pause · <kbd>→</kbd> step · <kbd>R</kbd> reset · in the tour, <kbd>←</kbd> <kbd>→</kbd> and <kbd>Esc</kbd></p>
     </aside>
@@ -101,7 +103,9 @@
   <script src="js/engine.js"></script>
   <script src="js/scenarios/false-sharing.js"></script>
   <script src="js/scenarios/aos-soa.js"></script>
+  <script src="js/scenarios/simd.js"></script>
   <script src="js/view.js"></script>
+  <script src="js/simd-view.js"></script>
   <script src="js/tour.js"></script>
   <script src="js/main.js"></script>
 </body>
